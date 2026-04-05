@@ -54,7 +54,7 @@ def evaluate_model(model_path, features_path, edges_path, embeddings_path):
 
 if __name__ == "__main__":
     # Test path (Mock data)
-    feat = "data/processed/mock_stocks.parquet"
+    feat = "data/raw/stock_data - stock_data.csv"
     edge = "data/graph/mock_edges.csv"
     emb = "data/graph/mock_embeddings.npy"
     

@@ -10,7 +10,7 @@ class StockPredictor:
     Inference Wrapper for Team E (Backend).
     Handles model loading and real-time prediction.
     """
-    def __init__(self, model_path="ml_model/best_model.pt", features_path="data/processed/mock_stocks.parquet", edges_path="data/graph/mock_edges.csv", embeddings_path="data/graph/mock_embeddings.npy"):
+    def __init__(self, model_path="ml_model/best_model.pt", features_path="data/raw/stock_data - stock_data.csv", edges_path="data/graph/mock_edges.csv", embeddings_path="data/graph/mock_embeddings.npy"):
         self.device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
         self.features_path = features_path
         self.edges_path = edges_path
@@ -24,6 +24,12 @@ class StockPredictor:
         in_channels = self.dataset[0].num_node_features
         self.model = StockGraphSAGE(in_channels=in_channels, hidden_channels=64, out_channels=2)
         
+        # Load ticker mapping from dataset (re-read to get alphabetical mapping)
+        df = pd.read_csv(features_path) if features_path.endswith('.csv') else pd.read_parquet(features_path)
+        if 'ticket' in df.columns: df = df.rename(columns={'ticket': 'ticker'})
+        self.tickers = sorted(df['ticker'].unique())
+        self.ticker_to_idx = {ticker: i for i, ticker in enumerate(self.tickers)}
+
         if os.path.exists(model_path):
             self.model.load_state_dict(torch.load(model_path, map_location=self.device))
             print(f"Model loaded successfully from {model_path}")
@@ -38,30 +44,16 @@ class StockPredictor:
         Predicts trend for a specific ticker using the latest available data.
         Returns: JSON-compatible dictionary.
         """
-        # In a real scenario, we would take the LATEST graph (last timestamp)
+        if ticker not in self.ticker_to_idx:
+            return {"status": "error", "message": f"Ticker {ticker} not found in model node mapping."}
+
         latest_graph = self.dataset[-1].to(self.device)
-        
-        # We need to find the index of the ticker in the graph
-        # For simplicity, we assume the dataset mapping is consistent
-        # In production, Team A will provide the ticker list order
-        
-        # Mock logic: find the ticker index (this should match Dataset mapping)
-        # Assuming tickers are handled in Alphabetical order or as provided by Team A
-        # For now, we take a random node or index 0 for demo
+        pred_idx = self.ticker_to_idx[ticker]
         
         with torch.no_grad():
             logits = self.model(latest_graph.x, latest_graph.edge_index)
             probs = torch.softmax(logits, dim=1)
             
-            # For demo, let's just return predictions for ALL nodes as a map
-            # but ideally we look up the specific ticker index
-            
-            # index = ticker_mapping[ticker]
-            # pred = probs[index].argmax().item()
-            # conf = probs[index].max().item()
-            
-            # Simulating specific ticker result:
-            pred_idx = 0 # Dummy index
             trend_label = "UP" if probs[pred_idx].argmax().item() == 1 else "DOWN"
             confidence = probs[pred_idx].max().item()
             
@@ -77,5 +69,6 @@ class StockPredictor:
 if __name__ == "__main__":
     # Internal Test for ML Engineer
     predictor = StockPredictor()
-    result = predictor.predict("FPT")
+    # Try a ticker from the CSV (e.g., VIC)
+    result = predictor.predict("VIC")
     print(json.dumps(result, indent=4))

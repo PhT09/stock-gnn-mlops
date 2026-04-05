@@ -102,8 +102,8 @@ def run_experiment(features_path, edges_path, embeddings_path, epochs=10, lr=0.0
         return test_acc
 
 if __name__ == "__main__":
-    # Test path
-    feat = "data/processed/mock_stocks.parquet"
+    # Test path using the new mock data
+    feat = "data/raw/stock_data - stock_data.csv"
     edge = "data/graph/mock_edges.csv"
     emb = "data/graph/mock_embeddings.npy"
     

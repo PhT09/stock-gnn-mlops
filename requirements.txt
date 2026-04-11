@@ -1,11 +1,1 @@
-pandas
-numpy
-scikit-learn
-networkx
-node2vec
-torch
-torch-geometric
-fastapi
-uvicorn
-mlflow
-vnstock
+fastapi[standard]

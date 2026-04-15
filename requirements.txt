@@ -1,11 +1,5 @@
+fastapi[standard]
+databricks-sdk
+python-dotenv
 pandas
-numpy
-scikit-learn
-networkx
-node2vec
-torch
-torch-geometric
-fastapi
-uvicorn
-mlflow
-vnstock
+pyarrow

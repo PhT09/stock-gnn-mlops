@@ -60,7 +60,7 @@ def run_pipeline(features, edges, embeddings, epochs=10):
     print("--- Pipeline Orchestration Finished ---")
 
 if __name__ == "__main__":
-    feat = "data/processed/mock_stocks.parquet"
+    feat = "data/raw/stock_data - stock_data.csv"
     edge = "data/graph/mock_edges.csv"
     emb = "data/graph/mock_embeddings.npy"
     

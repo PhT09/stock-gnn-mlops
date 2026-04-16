@@ -5,3 +5,7 @@ data/raw/
 data/processed/
 *.pt
 mlruns/
+venv/
+downloaded_data/
+*.png
+

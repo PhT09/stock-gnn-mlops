@@ -193,7 +193,7 @@ if __name__ == "__main__":
         
         # Bước 6: Xuất kết quả csv
         output_folder = os.path.join(base_dir, "data", "graph")
-        export_edges_to_csv(stock_graph, output_dir=output_folder, filename="stock_edges.csv")
+        export_edges_to_csv(stock_graph, output_dir=output_folder, filename="mock_edges.csv")
         
         # Bước 7 (Optional): Gọi nếu muốn xem trực quan
         visualize_graph(stock_graph)

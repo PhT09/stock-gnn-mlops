@@ -18,3 +18,12 @@ __pycache__/
 .DS_Store
 .idea/
 .vscode/
+.env
+data/raw/
+data/processed/
+*.pt
+mlruns/
+venv/
+downloaded_data/
+*.png
+

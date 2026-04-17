@@ -1,5 +1,23 @@
+# Môi trường ảo (Local environment)
+.venv/
+env/
+venv/
+
+# MLflow data (Không nên push lên git)
+mlruns/
+mlflow.db
+
+# Dữ liệu mẫu (Role D yêu cầu bỏ qua)
+mock_data.csv
+
+# Python caches
 __pycache__/
 *.pyc
+
+# Các tệp hệ thống khác
+.DS_Store
+.idea/
+.vscode/
 .env
 data/raw/
 data/processed/
@@ -8,4 +26,3 @@ mlruns/
 venv/
 downloaded_data/
 *.png
-data/graph/

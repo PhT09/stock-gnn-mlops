@@ -8,4 +8,4 @@ mlruns/
 venv/
 downloaded_data/
 *.png
-
+data/graph/

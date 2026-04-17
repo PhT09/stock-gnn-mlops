@@ -38,40 +38,47 @@ def load_mock_data(data_dir: str) -> pd.DataFrame:
 # 3. PREPROCESSING
 # =====================================================================
 def parse_spark_vector(vec):
-    """Trích xuất mảng giá trị (NumPy array) từ cột Spark MLlib Vector."""
+    """Trích xuất con số cuối cùng (Float) từ cột Spark MLlib Vector."""
     try:
         if isinstance(vec, dict) and 'values' in vec:
-            return np.array(vec['values'])
+            vals = vec['values']
+            return float(vals[-1]) if len(vals) > 0 else 0.0
         elif isinstance(vec, str):
             parsed_dict = ast.literal_eval(vec)
-            return np.array(parsed_dict.get('values', []))
-        return np.array([vec])
+            vals = parsed_dict.get('values', [])
+            return float(vals[-1]) if len(vals) > 0 else 0.0
+        elif isinstance(vec, (list, np.ndarray)):
+            return float(vec[-1]) if len(vec) > 0 else 0.0
+        return float(vec)
     except Exception:
-        return np.array([])
+        return 0.0
 
-def preprocess_and_pivot(df: pd.DataFrame) -> pd.DataFrame:
+def process_and_pivot(df: pd.DataFrame) -> pd.DataFrame:
     """
-    Xử lý dữ liệu đặc trưng và Pivot mảng dữ liệu.
-    - Cột (Columns) = Stock Symbols (ticker)
-    - Dòng (Rows) = Dates
-    - Giá trị (Values) = Giá đóng cửa hoặc thuộc tính đặc trưng đại diện
-    - Trám giá trị rỗng (Handle missing values) bằng Forward Fill.
+    Tự động nhận diện và Pivot mảng dữ liệu đã qua tiền xử lý.
     """
-    # Trích xuất dữ liệu mảng và chọn phần tử cuối cùng làm Giá Trị Biến Động (Closing Proxy)
-    df['feature_vectors'] = df['scaled_features'].apply(parse_spark_vector)
-    df['close_price_proxy'] = df['feature_vectors'].apply(lambda x: x[-1] if len(x) > 0 else np.nan)
-    
-    # Định dạng mốc thời gian và làm sạch dữ liệu nhiễu
-    df = df.dropna(subset=['close_price_proxy'])
-    df['date'] = pd.to_datetime(df['date'])
-    df = df.sort_values(by=['date', 'ticker'])
-    
-    # Pivot sang định dạng [N Ngày x M Chứng khoán]
-    pivot_df = df.pivot(index='date', columns='ticker', values='close_price_proxy')
-    
-    # Kỹ thuật Fill Missing Data: Kéo giá ngày hôm trước xuống gán cho ngày lễ/cuối tuần
+    if 'ticker' in df.columns and 'date' in df.columns:
+        val_col = [c for c in df.columns if c not in ['ticker', 'date']]
+        if not val_col:
+            raise ValueError("Không tìm thấy cột giá trị nào ngoài 'ticker' và 'date'.")
+        val_col = val_col[0]
+        
+        # Bóc tách vector Spark (dict) thành kiểu số nguyên/thực nếu cần thiết (Safeguard)
+        if df[val_col].apply(lambda x: isinstance(x, (dict, str, list, np.ndarray))).any():
+            df[val_col] = df[val_col].apply(parse_spark_vector)
+        else:
+            df[val_col] = pd.to_numeric(df[val_col], errors='coerce').fillna(0)
+            
+        df['date'] = pd.to_datetime(df['date'])
+        df = df.drop_duplicates(subset=['date', 'ticker'], keep='last')
+        pivot_df = df.pivot(index='date', columns='ticker', values=val_col)
+    else:
+        if 'date' in df.columns:
+            df['date'] = pd.to_datetime(df['date'])
+            df.set_index('date', inplace=True)
+        pivot_df = df
+        
     pivot_df = pivot_df.ffill().fillna(0)
-    
     return pivot_df
 
 # =====================================================================
@@ -175,9 +182,9 @@ if __name__ == "__main__":
         print("Đang khởi chạy luồng Đọc dữ liệu...")
         raw_df = load_mock_data(DATA_DIRECTORY)
         
-        # Bước 3: Tiền Xử lý
+        # Bước 3: Pivot dữ liệu dự án
         print("Đang cấu trúc lại chuỗi thời gian (Pivot)...")
-        pivot_data = preprocess_and_pivot(raw_df)
+        pivot_data = process_and_pivot(raw_df)
         
         # Bước 4: Tính Ma trận Tương Quan
         print("Đang tính Ma trận Pearson Correlation...")
@@ -191,12 +198,26 @@ if __name__ == "__main__":
         print(f"Số lượng Đỉnh (Nodes): {stock_graph.number_of_nodes()}")
         print(f"Số lượng Cạnh (Edges): {stock_graph.number_of_edges()}")
         
-        # Bước 6: Xuất kết quả csv
+        # Bước 6: Xuất kết quả csv mô tả Cạnh (Edges)
         output_folder = os.path.join(base_dir, "data", "graph")
         export_edges_to_csv(stock_graph, output_dir=output_folder, filename="mock_edges.csv")
+        
+        # Bước 6.1: Xuất Ma trận Tương Quan (Cho Graph Feature Generation Module sử dụng)
+        correlation_matrix_path = os.path.join(base_dir, "data", "processed", "parallel_correlation_matrix.csv")
+        os.makedirs(os.path.dirname(correlation_matrix_path), exist_ok=True)
+        correlation_df.to_csv(correlation_matrix_path)
+        print(f"Đã lưu Ma trận Tương quan (Correlation Matrix) ra: {correlation_matrix_path}")
         
         # Bước 7 (Optional): Gọi nếu muốn xem trực quan
         visualize_graph(stock_graph)
         
+        # Bước 8: In thông tin dữ liệu gốc
+        print("\n--- THÔNG TIN DỮ LIỆU GỐC ---")
+        print(f"Số dòng (rows): {raw_df.shape[0]}")
+        print(f"Số cột (columns): {raw_df.shape[1]}")
+        print("Mẫu 5 dòng đầu tiên (head):")
+        print(raw_df.head())
+        
     except Exception as e:
         print(f"Lỗi hệ thống: {e}")
+

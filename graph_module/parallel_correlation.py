@@ -59,6 +59,9 @@ def preprocess_data(df: pd.DataFrame) -> pd.DataFrame:
     df = df.dropna(subset=['close'])
     df['date'] = pd.to_datetime(df['date'])
     
+    # Handle duplicates before pivot
+    df = df.drop_duplicates(subset=['date', 'ticker'], keep='last')
+    
     # 2. Xoay trục theo Time-series
     pivot_df = df.pivot(index='date', columns='ticker', values='close')
     

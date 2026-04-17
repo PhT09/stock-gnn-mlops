@@ -5,9 +5,8 @@ from torch_geometric.nn import SAGEConv, BatchNorm
 
 class StockGraphSAGE(torch.nn.Module):
     """
-    GraphSAGE model for Stock Trend Prediction.
-    This model aggregates information from neighboring stocks (correlated stocks)
-    to predict the binary trend (Up/Down) of a target stock.
+    Mô hình GraphSAGE cho Dự đoán Chứng khoán.
+    Kiến trúc linh hoạt (Inductive Learning) phù hợp cho số lượng cổ phiếu biến động.
     """
     def __init__(self, in_channels, hidden_channels, out_channels, num_layers=2, dropout=0.2):
         super(StockGraphSAGE, self).__init__()
@@ -15,20 +14,21 @@ class StockGraphSAGE(torch.nn.Module):
         self.convs = nn.ModuleList()
         self.batch_norms = nn.ModuleList()
         
-        # Input layer
-        self.convs.append(SAGEConv(in_channels, hidden_channels))
+        # Layer Nhập (Input)
+        self.convs.append(SAGEConv(in_channels, hidden_channels, normalize=True))
         self.batch_norms.append(BatchNorm(hidden_channels))
         
-        # Hidden layers
+        # Các Layer Ẩn (Hidden) nếu có
         for _ in range(num_layers - 2):
-            self.convs.append(SAGEConv(hidden_channels, hidden_channels))
+            self.convs.append(SAGEConv(hidden_channels, hidden_channels, normalize=True))
             self.batch_norms.append(BatchNorm(hidden_channels))
             
-        # Final GraphSAGE layer
-        self.convs.append(SAGEConv(hidden_channels, hidden_channels))
-        self.batch_norms.append(BatchNorm(hidden_channels))
+        # Layer Cuối (Output Convolution)
+        if num_layers > 1:
+            self.convs.append(SAGEConv(hidden_channels, hidden_channels, normalize=True))
+            self.batch_norms.append(BatchNorm(hidden_channels))
         
-        # Classification head
+        # Đầu ra Phân loại (Classification Head)
         self.classifier = nn.Sequential(
             nn.Linear(hidden_channels, hidden_channels // 2),
             nn.ReLU(),
@@ -38,14 +38,10 @@ class StockGraphSAGE(torch.nn.Module):
         
         self.dropout = dropout
 
-    def forward(self, x, edge_index):
+    def forward(self, x, edge_index, edge_weight=None):
         """
-        Forward pass.
-        Args:
-            x (Tensor): Node feature matrix [num_nodes, in_channels]
-            edge_index (LongTensor): Graph connectivity [2, num_edges]
-        Returns:
-            Tensor: Prediction logits [num_nodes, out_channels]
+        Luồng đi tới (Forward Pass).
+        Hỗ trợ nhận tham số edge_weight (Dù GraphSAGE truyền thống dùng topology nhiều hơn).
         """
         for i, conv in enumerate(self.convs):
             x = conv(x, edge_index)
@@ -53,6 +49,5 @@ class StockGraphSAGE(torch.nn.Module):
             x = F.relu(x)
             x = F.dropout(x, p=self.dropout, training=self.training)
             
-        # Apply the final classification head
         logits = self.classifier(x)
         return logits

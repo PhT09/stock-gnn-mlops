@@ -1,15 +1,28 @@
-version: '3.8'
-
 services:
-  mlflow_server:
+  # Dịch vụ Backend của đồng nghiệp
+  backend:
+    build: 
+      context: .
+      dockerfile: ./backend/Dockerfile
+    container_name: stock-gnn-backend
+    ports:
+      - "8000:8000"
+    volumes:
+      - .:/app
+    environment:
+      - MLFLOW_TRACKING_URI=http://mlflow:5000
+    depends_on:
+      - mlflow
+
+  # Dịch vụ MLflow đã được MLOps (Bạn) tối ưu hóa
+  mlflow:
     build:
       context: .
       dockerfile: ./mlops/Dockerfile
-    container_name: mlflow_infrastructure
+    container_name: mlflow-server
     ports:
       - "5000:5000"
     volumes:
-      # Chúng ta mount cả thư mục để Docker không bị nhầm lẫn giữa file và folder
       - ./mlflow_data:/mlflow_data
     environment:
       - MLFLOW_TRACKING_URI=sqlite:////mlflow_data/mlflow.db

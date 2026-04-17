@@ -6,6 +6,7 @@ venv/
 # MLflow data (Không nên push lên git)
 mlruns/
 mlflow.db
+mlflow_data/
 
 # Dữ liệu mẫu (Role D yêu cầu bỏ qua)
 mock_data.csv

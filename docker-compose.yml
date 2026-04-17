@@ -1,12 +1,22 @@
-version: "3"
+version: '3.8'
 
 services:
-  backend:
-    build: ./backend
-    ports:
-      - "8000:8000"
-
-  mlflow:
-    image: ghcr.io/mlflow/mlflow
+  mlflow_server:
+    build:
+      context: .
+      dockerfile: ./mlops/Dockerfile
+    container_name: mlflow_infrastructure
     ports:
       - "5000:5000"
+    volumes:
+      # Chúng ta mount cả thư mục để Docker không bị nhầm lẫn giữa file và folder
+      - ./mlflow_data:/mlflow_data
+    environment:
+      - MLFLOW_TRACKING_URI=sqlite:////mlflow_data/mlflow.db
+    command: >
+      mlflow server 
+      --backend-store-uri sqlite:////mlflow_data/mlflow.db 
+      --default-artifact-root /mlflow_data/artifacts 
+      --host 0.0.0.0 
+      --port 5000
+    restart: always

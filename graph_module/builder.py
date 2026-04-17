@@ -6,22 +6,25 @@ import networkx as nx
 
 def parse_spark_vector(vec):
     """
-    Hàm này dùng để trích xuất mảng giá trị (NumPy array)
-    từ cột scaled_features do Spark MLlib sinh ra (dict).
+    Trích xuất con số cuối cùng từ dict hoặc mảng vector của Spark.
     """
     try:
         if isinstance(vec, dict) and 'values' in vec:
-            return np.array(vec['values'])
+            vals = vec['values']
+            return float(vals[-1]) if len(vals) > 0 else 0.0
         elif isinstance(vec, str):
             import ast
             parsed_dict = ast.literal_eval(vec)
-            return np.array(parsed_dict.get('values', []))
-        return np.array([vec])
-    except Exception as e:
-        return np.array([])
+            vals = parsed_dict.get('values', [])
+            return float(vals[-1]) if len(vals) > 0 else 0.0
+        elif isinstance(vec, (list, np.ndarray)):
+            return float(vec[-1]) if len(vec) > 0 else 0.0
+        return float(vec)
+    except Exception:
+        return 0.0
 
-def step1_load_and_preprocess():
-    print("--- BƯỚC 1: LOAD VÀ TIỀN XỬ LÝ DỮ LIỆU ---")
+def step1_load_data():
+    print("--- BƯỚC 1: LOAD DỮ LIỆU ĐÃ TIỀN XỬ LÝ ---")
     
     # Đảm bảo đường dẫn chính xác dù chạy từ root hay từ trong graph_module
     base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -38,26 +41,41 @@ def step1_load_and_preprocess():
     # 2. Đọc và ghép nối (concatenate) toàn bộ lại thành 1 DataFrame
     df = pd.concat([pd.read_parquet(f) for f in parquet_files], ignore_index=True)
     
-    # 3. Trích xuất mảng `values` từ cấu trúc Spark Vector
-    print("Đang bóc tách cột scaled_features (Trích xuất các Vector đặc trưng)...")
-    df['features_array'] = df['scaled_features'].apply(parse_spark_vector)
-    
-    # 4. Tính ma trận biến động: Lấy ví dụ giá trị cuối của vector làm đại diện (giả định là Close price/Return)
-    df['representative_value'] = df['features_array'].apply(lambda x: x[-1] if len(x) > 0 else 0)
-    
-    # 5. Làm sạch dữ liệu
-    df = df.dropna(subset=['representative_value'])
-    df['date'] = pd.to_datetime(df['date'])  # Đảm bảo định dạng thời gian chuẩn tốc độ cao
-    df = df.sort_values(by=['date', 'ticker'])
-    
-    # 6. TỐI ƯU HÓA: Tạo Pivot Table (Ma Trận Time-Series)
-    # Cột là Mã cổ phiếu, Dòng là Ngày, Giá trị là Biến động (để tính toán Mạng Lưới cực nhanh ở Bước 2)
-    pivot_df = df.pivot(index='date', columns='ticker', values='representative_value')
-    
-    # Trám dữ liệu thiếu (nội suy) nếu cổ phiếu có ngày không giao dịch
+    # 3. Phân loại cấu trúc (Pivot sẵn hay Bảng dọc)
+    if 'ticker' in df.columns and 'date' in df.columns:
+        print("Dữ liệu đang ở dạng Bảng dọc (Long Format). Đang chuyển đổi sang Pivot Table...")
+        # Tìm cột chứa giá trị (loại trừ ticker và date)
+        val_col = [c for c in df.columns if c not in ['ticker', 'date']]
+        if not val_col:
+            print("Lỗi: Không tìm thấy cột giá trị nào ngoài 'ticker' và 'date'.")
+            return None
+            
+        val_col = val_col[0] # Lấy cột đầu tiên làm giá trị
+        print(f"Xác định cột '{val_col}' là cột chứa giá trị tương quan.")
+        
+        # BỔ SUNG FIX LOGIC: Bóc tách vector Spark (dict) thành kiểu số nguyên/thực
+        if df[val_col].apply(lambda x: isinstance(x, (dict, str, list, np.ndarray))).any():
+            print(f"Cột '{val_col}' có chứa Vector phức tạp (như kiểu của Spark). Đang tự động chuyển sang số (lấy giá trị đại diện)...")
+            df[val_col] = df[val_col].apply(parse_spark_vector)
+        else:
+            # Ép kiểu an toàn sang float nếu là number
+            df[val_col] = pd.to_numeric(df[val_col], errors='coerce').fillna(0)
+        
+        df['date'] = pd.to_datetime(df['date'])
+        df = df.drop_duplicates(subset=['date', 'ticker'], keep='last')
+        pivot_df = df.pivot(index='date', columns='ticker', values=val_col)
+    else:
+        print("Dữ liệu đã ở dạng Ma trận / Pivot Table (Wide Format).")
+        # Gắn cột date làm Index nếu tồn tại
+        if 'date' in df.columns:
+            df['date'] = pd.to_datetime(df['date'])
+            df.set_index('date', inplace=True)
+        pivot_df = df
+        
+    # Trám dữ liệu thiếu (nếu có) bằng ffill() và fillna(0)
     pivot_df = pivot_df.ffill().fillna(0)
     
-    print(f"[THÀNH CÔNG BƯỚC 1] Tổng số ngày: {pivot_df.shape[0]} | Tổng số mã cổ phiếu (Nodes): {pivot_df.shape[1]}")
+    print(f"[THÀNH CÔNG BƯỚC 1] Tổng số dòng thời gian: {pivot_df.shape[0]} | Tổng số mã cổ phiếu (Nodes): {pivot_df.shape[1]}")
     return pivot_df
 
 def step2_build_graph(pivot_df, threshold=0.65):
@@ -172,7 +190,7 @@ def step4_generate_embeddings(G, output_npy="stock_embeddings.npy"):
 if __name__ == "__main__":
     # ===== CHẠY QUY TRÌNH TOÀN BỘ =====
     # Khởi động Bước 1
-    df_pivot = step1_load_and_preprocess()
+    df_pivot = step1_load_data()
     
     # Khởi động Bước 2
     if df_pivot is not None:

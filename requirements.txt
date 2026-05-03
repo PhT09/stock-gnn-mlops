@@ -3,10 +3,9 @@ databricks-sdk
 python-dotenv
 pandas
 pyarrow
-networkx
-node2vec
-torch
-torch-geometric
 uvicorn
 mlflow
-vnstock
+xgboost
+scikit-learn
+matplotlib
+seaborn

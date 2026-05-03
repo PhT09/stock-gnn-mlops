@@ -1,9 +1,11 @@
+version: '3.8'
+
 services:
   backend:
     build: 
       context: .
       dockerfile: backend/Dockerfile
-    container_name: stock-gnn-backend
+    container_name: stock-mlops-backend
     ports:
       - "8000:8000"
     volumes:

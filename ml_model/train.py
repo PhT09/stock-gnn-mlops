@@ -20,10 +20,17 @@ def train(data_path="data/raw/stock_data"):
     X_train, X_test = X[:split_idx], X[split_idx:]
     y_train, y_test = y.iloc[:split_idx], y.iloc[split_idx:]
     
-    # Nếu không có MLflow server chạy ở port 5000, mặc định lưu thẳng vào thư mục mlruns ở máy tính
-    tracking_uri = os.getenv("MLFLOW_TRACKING_URI", f"file:///{os.path.abspath('mlruns').replace(os.sep, '/')}")
-    mlflow.set_tracking_uri(tracking_uri)
-    mlflow.set_experiment("Stock_Prediction_XGBoost")
+    # Kiểm tra xem có đang chạy trên Databricks không
+    is_databricks = "DATABRICKS_RUNTIME_VERSION" in os.environ
+    
+    if not is_databricks:
+        # Chạy ở Local
+        tracking_uri = os.getenv("MLFLOW_TRACKING_URI", f"file:///{os.path.abspath('mlruns').replace(os.sep, '/')}")
+        mlflow.set_tracking_uri(tracking_uri)
+        mlflow.set_experiment("Stock_Prediction_XGBoost")
+    else:
+        # Chạy trên Databricks
+        mlflow.set_experiment("/Shared/Stock_Prediction_XGBoost")
     
     with mlflow.start_run() as run:
         params = {

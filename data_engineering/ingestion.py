@@ -24,9 +24,9 @@ def ingest_data(output_folder="data/raw/stock_data"):
     processed_path = "/Volumes/workspace/default/stock_data/processed/stock_features.parquet"
 
     try:
-        print(f"Đang kết nối tới Databricks bằng Profile: dbc-d830d4f6-f7bb...")
+        print(f"Đang kết nối tới Databricks...")
         # Sử dụng chính xác tên profile mà Databricks CLI vừa tạo
-        w = WorkspaceClient(profile="dbc-d830d4f6-f7bb")
+        w = WorkspaceClient()
         
         print(f"Đang kiểm tra thư mục Parquet trên Volume: {processed_path}")
         

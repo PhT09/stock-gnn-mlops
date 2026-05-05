@@ -47,11 +47,16 @@ def train(data_path="data/raw/stock_data"):
         metrics = evaluate_model(model, X_test, y_test)
         mlflow.log_metrics(metrics)
         
-        # Register the model
+        # ✅ FIX: Thêm input_example để MLflow tự động infer signature
+        # Unity Catalog yêu cầu signature cho tất cả models
+        input_example = pd.DataFrame(X_train[:5])  # Lấy 5 mẫu đầu tiên
+        
+        # Register the model with signature
         mlflow.xgboost.log_model(
             xgb_model=model,
             artifact_path="xgboost-model",
-            registered_model_name="stock_predictor"
+            registered_model_name="stock_predictor",
+            input_example=input_example  # ✅ Thêm dòng này
         )
         
         print("Model training completed and logged to MLflow.")

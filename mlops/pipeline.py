@@ -1,7 +1,5 @@
 import sys
 import os
-sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-
 from data_engineering.ingestion import ingest_data
 from data_engineering.preprocessing import clean_data
 from data_engineering.feature_engineering import engineer_features

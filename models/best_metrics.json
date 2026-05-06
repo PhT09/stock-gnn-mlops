@@ -1,0 +1,18 @@
+{
+  "metrics": {
+    "accuracy": 0.620574076939994,
+    "f1_score": 0.22641634767879235,
+    "auc_roc": 0.6078793909876962
+  },
+  "model_info": {
+    "run_id": "dfb63ca2969b4283a905c9ee499c61c3",
+    "experiment_id": "117294656100658",
+    "params": {
+      "objective": "binary:logistic",
+      "max_depth": 5,
+      "learning_rate": 0.05,
+      "n_estimators": 100
+    }
+  },
+  "saved_at": "2026-05-06T05:00:55.888341"
+}

@@ -6,7 +6,7 @@ from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
 from email.mime.image import MIMEImage
 
-def generate_report(model, df, metrics):
+def generate_report(model, df, metrics, data_metadata=None):
     print("Đang tạo báo cáo Insight & Visualization...")
     
     # 1. Trích xuất Feature Importances từ XGBoost
@@ -38,16 +38,26 @@ def generate_report(model, df, metrics):
     plt.grid(True)
     
     image_path = "data/recent_trend.png"
+    os.makedirs("data", exist_ok=True)
     plt.savefig(image_path)
     plt.close()
     
-    # 4. Tạo nội dung Email (HTML)
-    insight_text = f"Mô hình dự đoán thị trường ngày mai sẽ <b>{pred_text}</b>.<br><br>"
+    # 4. Tạo nội dung Email (HTML) với metadata
+    data_info = ""
+    if data_metadata:
+        latest_date = data_metadata.get('latest_date', 'N/A')
+        days_old = data_metadata.get('days_old', 'N/A')
+        total_rows = data_metadata.get('total_rows', 'N/A')
+        
+        data_freshness = "🟢 Mới" if days_old <= 2 else f"🟡 Cũ {days_old} ngày"
+        data_info = f"<br><b>📅 Dữ liệu:</b> Cập nhật đến {latest_date} ({data_freshness}) - {total_rows:,} mẫu<br>"
+    
+    insight_text = f"Mô hình dự đoán thị trường ngày mai sẽ <b>{pred_text}</b>.{data_info}<br>"
     insight_text += "<b>💡 INSIGHTS (Nguyên nhân chính dẫn đến dự đoán này):</b><br>"
     for name, imp in top_features:
         insight_text += f"- Chỉ số <b>{name}</b> đóng góp {imp*100:.1f}% vào quyết định.<br>"
         
-    insight_text += f"<br><b>📊 Đánh giá Model:</b> Độ chính xác (Accuracy): {metrics['accuracy']:.2f}, F1-Score: {metrics['f1_score']:.2f}"
+    insight_text += f"<br><b>📊 Đánh giá Model:</b> Accuracy: {metrics['accuracy']:.2f}, F1-Score: {metrics['f1_score']:.2f}, AUC-ROC: {metrics['auc_roc']:.2f}"
     
     html_content = f"""
     <html>
@@ -87,8 +97,8 @@ def generate_report(model, df, metrics):
             with smtplib.SMTP_SSL("smtp.gmail.com", 465) as server:
                 server.login(sender_email, sender_password)
                 server.send_message(msg)
-            print("Gửi Email thành công!")
+            print("✅ Gửi Email thành công!")
         except Exception as e:
-            print(f"Lỗi gửi email: {e}")
+            print(f"❌ Lỗi gửi email: {e}")
     else:
-        print("Bỏ qua gửi Email vì chưa cấu hình SENDER_EMAIL trong file .env.")
+        print("ℹ️ Bỏ qua gửi Email vì chưa cấu hình SENDER_EMAIL trong file .env.")

@@ -88,7 +88,7 @@ def compare_models(new_metrics, old_metrics):
         print(f"   → Giữ nguyên best model hiện tại")
         return False
 
-def train(data_path="data/raw/stock_data"):
+def train(data_path="/Volumes/workspace/default/stock_data/processed/stock_features.parquet"):
     print("Loading feature table from Databricks...")
     df = pd.read_parquet(data_path)
     
@@ -152,6 +152,33 @@ def train(data_path="data/raw/stock_data"):
             if os.path.exists(PREV_BEST_MODEL_PATH):
                 mlflow.log_artifact(PREV_BEST_MODEL_PATH, "model_files")
             mlflow.log_artifact(METRICS_PATH, "model_files")
+            
+            # ============================================================
+            # AUTO SET ALIAS "production" CHO BE
+            # ============================================================
+            try:
+                # Get latest registered version
+                client = mlflow.tracking.MlflowClient()
+                model_name = "workspace.default.stock_predictor"
+                
+                # Wait a bit for registration to complete
+                import time
+                time.sleep(2)
+                
+                versions = client.search_model_versions(f"name='{model_name}'")
+                if versions:
+                    latest_version = versions[0].version
+                    
+                    # Set alias
+                    client.set_registered_model_alias(
+                        name=model_name,
+                        alias="production",
+                        version=latest_version
+                    )
+                    print(f"\n✅ Set alias 'production' → version {latest_version}")
+                    print(f"   → BE sẽ tự động load model mới khi restart!")
+            except Exception as e:
+                print(f"\n⚠️  Không thể set alias (không ảnh hưởng training): {e}")
         else:
             print("\n⏸️  Model không tốt hơn → Không cập nhật best_model.json")
         

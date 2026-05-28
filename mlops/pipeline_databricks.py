@@ -23,7 +23,7 @@ def run_pipeline_databricks(force_train=False, recent_days=None):
     # 1. Ingestion
     print("\n[STEP 1/3] Data Ingestion...")
     metadata = ingest_data(
-        output_folder="/Workspace/Users/vphat545@gmail.com/stock-gnn-mlops/data/raw/stock_data",
+        output_folder="/Volumes/workspace/default/stock_data/processed/stock_features.parquet",
         recent_days=recent_days,
         check_freshness=True,
         force=force_train
@@ -59,7 +59,7 @@ def run_pipeline_databricks(force_train=False, recent_days=None):
     print(f"\n[STEP 2/3] Model Training...")
     try:
         model, df, metrics = train(
-            data_path="/Workspace/Users/vphat545@gmail.com/stock-gnn-mlops/data/raw/stock_data"
+            data_path="/Volumes/workspace/default/stock_data/processed/stock_features.parquet"
         )
         print(f"\n✅ Training completed!")
         print(f"   Accuracy: {metrics.get('accuracy', 0):.3f}")

@@ -9,14 +9,14 @@ from dotenv import load_dotenv
 from vnstock import Vnstock
 
 def load_config():
-    config_path = '/Workspace/Users/trannguyentoanphat1592005@gmail.com/stock-gnn-mlops/data_engineering/config.yaml'
+    config_path = '/Workspace/Users/vphat545@gmail.com/stock-gnn-mlops/data_engineering/config.yaml'
     with open(config_path, 'r') as f:
         return yaml.safe_load(f)
 
 def load_api_key():
     """Load VNSTOCK API key from .env file"""
     # Load .env file from the same directory as this script
-    env_path = '/Workspace/Users/trannguyentoanphat1592005@gmail.com/stock-gnn-mlops/data_engineering/.env'
+    env_path = '/Workspace/Users/vphat545@gmail.com/stock-gnn-mlops/data_engineering/.env'
     
     if os.path.exists(env_path):
         load_dotenv(env_path)

@@ -8,6 +8,7 @@ from email.mime.text import MIMEText
 from email.mime.image import MIMEImage
 from email.mime.base import MIMEBase
 from email import encoders
+from dotenv import load_dotenv
 
 def generate_report(model, df, metrics, data_metadata=None):
     print("Đang tạo báo cáo Insight & Visualization...")
@@ -181,6 +182,9 @@ def generate_report(model, df, metrics, data_metadata=None):
     
     # ===== GỬI EMAIL =====
     # 13. Gửi Email (Nếu có cấu hình trong .env)
+    # Load .env file to read email config
+    env_path = "/Workspace/Users/vphat545@gmail.com/stock-gnn-mlops/.env"
+    load_dotenv(env_path)
     sender_email = os.getenv("SENDER_EMAIL")
     sender_password = os.getenv("SENDER_PASSWORD")
     receiver_email = os.getenv("RECEIVER_EMAIL")

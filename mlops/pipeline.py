@@ -3,7 +3,6 @@ import os
 sys.path.append('/Workspace/Users/vphat545@gmail.com/stock-gnn-mlops')
 
 from data_engineering.ingestion import ingest_data
-from data_engineering.preprocessing import clean_data
 from data_engineering.feature_engineering import engineer_features
 from ml_model.train import train
 
@@ -11,44 +10,28 @@ def run_pipeline(force_train=False):
     print("--- Starting MLOps Pipeline ---")
     
     # 1. Ingestion with metadata
-    metadata = ingest_data(check_freshness=True, force=force_train)
+    ingest_data()  # No parameters needed
+    metadata = {}  # Placeholder - ingestion doesn't return metadata
     
-    if not metadata.get("success"):
-        print(f"❌ Pipeline stopped due to ingestion failure: {metadata.get('error')}")
-        return
+    print("\n📊 Ingestion completed")
     
-    # Print ingestion summary
-    print(f"\n📊 DATA SUMMARY:")
-    print(f"  Latest date: {metadata.get('latest_date')}")
-    print(f"  Date range: {metadata.get('oldest_date')} to {metadata.get('latest_date')}")
-    print(f"  Total rows: {metadata.get('total_rows'):,}")
-    print(f"  Data age: {metadata.get('days_old')} days old")
+    # Continue with pipeline - ingest_data() already handles freshness check internally
     
-    if metadata.get('warnings'):
-        for warning in metadata['warnings']:
-            print(f"  {warning}")
-    
-    # 2. Check if we have new data
-    has_new_data = metadata.get('has_new_data', False)
-    
-    if not has_new_data and not force_train:
-        print("\n⏸️  PIPELINE PAUSED: Không có data mới")
-        print(f"   Lần xử lý cuối: {metadata.get('last_processed_at')}")
-        print(f"   Dùng run_pipeline(force_train=True) để bắt buộc train")
-        return
-    
-    print("\n🚀 TIẾP TỤC PIPELINE: Phát hiện data mới hoặc force mode")
+    # 3. Feature Engineering - Process raw data to features
+    print("\n🔧 Step 2: Feature Engineering")
+    engineer_features()
     
     from mlops.reporter import generate_report
-    # 3. Training
+    
+    # 4. Training
+    print("\n🤖 Step 3: Model Training")
     model, df, metrics = train()
     
-    # 4. Report & Insights & Email
-    generate_report(model, df, metrics, data_metadata=metadata)
+    # 5. Report & Insights & Email
+    print("\n📧 Step 4: Generate Report & Send Email")
+    generate_report(model, df, metrics)
     
     print("\n--- Pipeline Completed Successfully ---")
-    print(f"✅ Trained on {metadata.get('total_rows'):,} samples")
-    print(f"✅ Data up to: {metadata.get('latest_date')}")
     print(f"✅ Model metrics: Accuracy={metrics.get('accuracy', 0):.3f}, F1={metrics.get('f1_score', 0):.3f}")
 
 if __name__ == "__main__":

@@ -9,6 +9,110 @@
    • 2 cách chia sẻ: MLflow Registry (Option 1) hoặc File .json (Option 2)
 
 
+
+
+⚠️  QUAN TRỌNG - MLFLOW vs GIT:
+================================================================================
+
+❓ "BE lấy model từ đâu? Từ MLflow hay từ Git?"
+
+✅ TRẢ LỜI: BE LẤY TỪ MLFLOW REGISTRY (REAL-TIME), KHÔNG PHẢI GIT!
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+OPTION 1 (MLflow API) - Model LUÔN MỚI NHẤT:
+────────────────────────────────────────────────────────────────────────────
+
+   Khi MLOps train model mới (12h & 16h):
+   1. train.py → Train XGBoost
+   2. mlflow.xgboost.log_model(registered_model_name="stock_predictor")
+   3. MLflow TỰ ĐỘNG:
+      • Tạo version mới: version 16, 17, 18...
+      • Lưu vào MLflow Registry (cloud storage)
+      • Set alias "production" → version mới
+   
+   Khi BE load model:
+   1. BE start/restart
+   2. StockPredictor(alias="production")
+   3. MLflow API check: "production" alias trỏ đến version nào?
+   4. MLflow trả về: Model version MỚI NHẤT
+   5. BE cache model ở memory
+   
+   ✅ BE LUÔN LẤY MODEL MỚI NHẤT!
+   ✅ KHÔNG CẦN push Git!
+   ✅ KHÔNG CẦN pull code!
+   ✅ CHỈ cần restart BE!
+
+
+GIT REPOSITORY - CHỈ LÀ CODE:
+────────────────────────────────────────────────────────────────────────────
+
+   Git chứa:
+   ✅ Code: train.py, predict.py, backend/main.py
+   ✅ Config: requirements.txt, Dockerfile
+   ✅ Docs: README.md, hướng dẫn
+   ❌ Model binary: best_model.json (401 KB)
+   
+   Lý do KHÔNG push model lên Git:
+   • File quá lớn (401 KB, sẽ càng lớn khi train nhiều)
+   • Model thay đổi mỗi ngày (2 lần/ngày) → Git rất nặng
+   • Git dùng cho code versioning, KHÔNG phải model storage
+   • Model nên lưu ở model registry (MLflow), không phải Git
+
+
+SO SÁNH:
+────────────────────────────────────────────────────────────────────────────
+
+   ┌────────────────┬─────────────────────┬─────────────────────┐
+   │                │   MLflow Registry   │   Git Repository    │
+   ├────────────────┼─────────────────────┼─────────────────────┤
+   │ Lưu gì?        │ Model (401KB)       │ Code (.py)          │
+   │ Update?        │ Mỗi lần train       │ Khi sửa code        │
+   │ BE load từ?    │ ✅ ĐÂY!            │ ❌ KHÔNG!           │
+   │ Real-time?     │ ✅ Auto             │ ❌ Phải pull        │
+   │ Versions?      │ 15 versions hiện có │ Git commits         │
+   └────────────────┴─────────────────────┴─────────────────────┘
+
+
+VÍ DỤ THỰC TẾ:
+────────────────────────────────────────────────────────────────────────────
+
+   Timeline:
+   
+   09:00 - MLOps train model → Version 15 → MLflow Registry
+   09:01 - Alias "production" = Version 15
+   10:00 - BE start → Load version 15 ✅
+   
+   12:00 - MLOps train model → Version 16 (tốt hơn) → MLflow Registry
+   12:01 - Alias "production" = Version 16 (tự động!)
+   12:05 - BE restart → Load version 16 ✅ (model mới!)
+   
+   16:00 - MLOps train model → Version 17 → MLflow Registry
+   16:01 - Alias "production" = Version 17
+   16:05 - BE restart → Load version 17 ✅
+   
+   → BE KHÔNG cần pull Git!
+   → BE KHÔNG cần copy file!
+   → BE CHỈ restart → Lấy model mới TỰ ĐỘNG!
+
+
+LƯU Ý:
+────────────────────────────────────────────────────────────────────────────
+
+   ⚠️  OPTION 2 (File .json) khác:
+   • Model lưu trong Git hoặc workspace
+   • Phải copy file thủ công
+   • Không auto-update
+   → Chỉ dùng cho test/demo
+
+   ✅ OPTION 1 (MLflow) - Production standard:
+   • Model trong MLflow cloud
+   • Auto-update khi restart
+   • Version control tự động
+   → Dùng cho production
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
 👥 AI LÀM GÌ?
 ================================================================================
 

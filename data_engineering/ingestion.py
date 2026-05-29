@@ -1,190 +1,166 @@
 import os
-import sys
+import yaml
 import pandas as pd
-from databricks.sdk import WorkspaceClient
-from dotenv import load_dotenv
 from datetime import datetime, timedelta
-import json
+import time
+from pyspark.sql import SparkSession
+from dotenv import load_dotenv
 
-# Thêm Databricks CLI vào PATH
-cli_path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "databricks_cli_folder")
-os.environ["PATH"] = cli_path + os.pathsep + os.environ.get("PATH", "")
+from vnstock import Vnstock
 
-CACHE_FILE = "data/.last_processed_date.json"
+def load_config():
+    config_path = '/Workspace/Users/trannguyentoanphat1592005@gmail.com/stock-gnn-mlops/data_engineering/config.yaml'
+    with open(config_path, 'r') as f:
+        return yaml.safe_load(f)
 
-def load_last_processed_date():
-    """Load the last processed date from cache"""
-    if os.path.exists(CACHE_FILE):
-        try:
-            with open(CACHE_FILE, 'r') as f:
-                cache = json.load(f)
-                return cache.get('latest_date'), cache.get('processed_at')
-        except:
-            pass
-    return None, None
-
-def save_last_processed_date(latest_date):
-    """Save the latest processed date to cache"""
-    os.makedirs(os.path.dirname(CACHE_FILE), exist_ok=True)
-    cache = {
-        'latest_date': latest_date,
-        'processed_at': datetime.now().isoformat()
-    }
-    with open(CACHE_FILE, 'w') as f:
-        json.dump(cache, f, indent=2)
-
-def ingest_data(output_folder="data/raw/stock_data", recent_days=None, check_freshness=True, force=False):
-    """
-    Ingest data by downloading it from Databricks Volume.
+def load_api_key():
+    """Load VNSTOCK API key from .env file"""
+    # Load .env file from the same directory as this script
+    env_path = '/Workspace/Users/trannguyentoanphat1592005@gmail.com/stock-gnn-mlops/data_engineering/.env'
     
-    Args:
-        output_folder (str): Local folder to save downloaded data
-        recent_days (int, optional): If set, only keep data from last N days
-        check_freshness (bool): If True, warn if data is older than 2 days
-        force (bool): If True, process even if data hasn't changed
+    if os.path.exists(env_path):
+        load_dotenv(env_path)
+        api_key = os.getenv('VNSTOCK_API')
         
-    Returns:
-        dict: Metadata including has_new_data flag
-    """
-    print("--- Bắt đầu tiến trình Ingestion từ Databricks ---")
-    load_dotenv()
+        if api_key:
+            print(f"VNSTOCK API key loaded from .env file")
+            return api_key
+        else:
+            print("VNSTOCK_API not found in .env file. Using guest mode.")
+            return None
+    else:
+        print(f".env file not found at {env_path}. Using guest mode.")
+        return None
 
-    host = os.environ.get("DATABRICKS_HOST")
+def ingest_data():
+    config = load_config()
+    tickers = config['tickers']
+    years = config['params']['timeframe_years']
     
-    if not host:
-        print("Lỗi: Không tìm thấy DATABRICKS_HOST trong file .env.")
-        return {"success": False, "error": "Missing DATABRICKS_HOST"}
-
-    processed_path = "/Volumes/workspace/default/stock_data/processed/stock_features.parquet"
-
+    spark = SparkSession.builder \
+        .appName("StockIngestion") \
+        .getOrCreate()
+    
+    raw_path = "/Volumes/workspace/default/stock_data/raw/stock_data.parquet"
+    
+    # Determine date range based on existing data
+    end_date = datetime.now().strftime('%Y-%m-%d')
+    
     try:
-        print(f"Đang kết nối tới Databricks...")
-        w = WorkspaceClient()
+        # Try to read existing data to get the last date
+        existing_spark_df = spark.read.parquet(raw_path)
+        existing_df = existing_spark_df.toPandas()
         
-        print(f"Đang kiểm tra thư mục Parquet trên Volume: {processed_path}")
-        
-        try:
-            contents = w.files.list_directory_contents(processed_path)
-            items = list(contents)
+        if not existing_df.empty:
+            # Get the maximum date from existing data
+            existing_df['date'] = pd.to_datetime(existing_df['date'])
+            max_date = existing_df['date'].max()
             
-            os.makedirs(output_folder, exist_ok=True)
+            # Start from the day after the last date in existing data
+            start_date = (max_date + timedelta(days=1)).strftime('%Y-%m-%d')
             
-            # Lấy danh sách tên file trên Databricks
-            remote_filenames = [os.path.basename(item.path) for item in items if not item.is_directory]
+            print(f"Existing data found. Last date: {max_date.strftime('%Y-%m-%d')}")
+            print(f"Fetching incremental data from {start_date} to {end_date}...")
             
-            # 1. Xóa các file cũ ở local không còn tồn tại trên Databricks
-            local_files = os.listdir(output_folder) if os.path.exists(output_folder) else []
-            for lf in local_files:
-                if lf not in remote_filenames:
-                    os.remove(os.path.join(output_folder, lf))
-                    print(f"Đã xóa file cũ: {lf}")
+            # Check if there's actually new data to fetch
+            if start_date > end_date:
+                print("Data is already up to date. No new data to fetch.")
+                return
+        else:
+            # Empty dataframe - do full load
+            start_date = (datetime.now() - timedelta(days=years*365)).strftime('%Y-%m-%d')
+            print(f"Existing data is empty. Performing full load from {start_date} to {end_date}...")
             
-            # 2. Chỉ tải về những file chưa có ở local
-            download_count = 0
-            for item in items:
-                if not item.is_directory:
-                    file_name = os.path.basename(item.path)
-                    local_filepath = os.path.join(output_folder, file_name)
-                    
-                    if file_name not in local_files:
-                        print(f"Đang tải file mới: {file_name}...")
-                        response = w.files.download(item.path)
-                        with open(local_filepath, 'wb') as f:
-                            f.write(response.contents.read())
-                        download_count += 1
-            
-            print(f"Đã đồng bộ {download_count} file mới.")
-            
-            # 3. Đọc data để phân tích metadata
-            print(f"\nĐang phân tích metadata...")
-            df = pd.read_parquet(output_folder)
-            
-            # Phát hiện latest date
-            if 'date' in df.columns:
-                df['date'] = pd.to_datetime(df['date'])
-                latest_date = df['date'].max()
-                oldest_date = df['date'].min()
-                unique_dates = df['date'].nunique()
-                total_rows = len(df)
-                
-                # 4. CHECK FOR NEW DATA (So sánh với lần trước)
-                last_processed_date, last_processed_at = load_last_processed_date()
-                
-                has_new_data = False
-                if last_processed_date is None:
-                    has_new_data = True
-                    print(f"🆕 ĐÂY LÀ LẦN ĐẦU TIÊN ingest data")
-                elif str(latest_date.date()) > last_processed_date:
-                    has_new_data = True
-                    print(f"🆕 CÓ DATA MỚI!")
-                    print(f"   Lần trước: {last_processed_date} (xử lý lúc {last_processed_at})")
-                    print(f"   Bây giờ:   {latest_date.date()}")
-                else:
-                    print(f"⏸️  KHÔNG CÓ DATA MỚI")
-                    print(f"   Latest date: {latest_date.date()} (giống lần trước: {last_processed_date})")
-                    if not force:
-                        print(f"   → Bỏ qua xử lý. Dùng force=True để bắt buộc chạy.")
-                
-                print(f"\n✅ Dữ liệu từ {oldest_date.date()} đến {latest_date.date()}")
-                print(f"✅ Tổng {unique_dates} ngày giao dịch, {total_rows:,} dòng dữ liệu")
-                
-                # 5. Check data freshness
-                warnings = []
-                days_old = (datetime.now() - latest_date).days
-                if check_freshness and days_old > 2:
-                    warning_msg = f"⚠️ CẢNH BÁO: Dữ liệu đã cũ {days_old} ngày (mới nhất: {latest_date.date()})"
-                    print(warning_msg)
-                    warnings.append(warning_msg)
-                
-                # 6. Optional: Filter to recent days only
-                if recent_days is not None:
-                    cutoff_date = latest_date - timedelta(days=recent_days)
-                    df_filtered = df[df['date'] >= cutoff_date]
-                    filtered_path = output_folder.replace('/stock_data', '/stock_data_filtered')
-                    os.makedirs(filtered_path, exist_ok=True)
-                    df_filtered.to_parquet(filtered_path, index=False)
-                    print(f"✅ Đã lọc {len(df_filtered):,} dòng từ {recent_days} ngày gần nhất")
-                    print(f"✅ Lưu tại: {filtered_path}")
-                
-                # 7. Save to cache (only if has new data or force)
-                if has_new_data or force:
-                    save_last_processed_date(str(latest_date.date()))
-                    print(f"\n💾 Đã lưu cache: {latest_date.date()}")
-                
-                metadata = {
-                    "success": True,
-                    "latest_date": str(latest_date.date()),
-                    "oldest_date": str(oldest_date.date()),
-                    "total_rows": total_rows,
-                    "unique_dates": unique_dates,
-                    "days_old": days_old,
-                    "warnings": warnings,
-                    "output_folder": output_folder,
-                    "has_new_data": has_new_data,
-                    "last_processed_date": last_processed_date,
-                    "last_processed_at": last_processed_at
-                }
-                
-                print(f"\n✅ Thành công! Dữ liệu nằm ở: '{output_folder}'")
-                return metadata
-            else:
-                print("⚠️ Không tìm thấy cột 'date' trong dữ liệu")
-                return {"success": True, "warning": "No date column found"}
-            
-        except Exception as dir_e:
-            if "not exist" in str(dir_e).lower() or "404" in str(dir_e):
-                error_msg = f"Lỗi: Thư mục {processed_path} không tồn tại trên Databricks."
-                print(error_msg)
-                return {"success": False, "error": error_msg}
-            else:
-                raise dir_e
-
     except Exception as e:
-        error_msg = f"Lỗi trong quá trình Ingestion: {str(e)}"
-        print(error_msg)
-        return {"success": False, "error": error_msg}
+        # File doesn't exist - do full load
+        start_date = (datetime.now() - timedelta(days=years*365)).strftime('%Y-%m-%d')
+        print(f"No existing data found ({str(e)}). Performing full load from {start_date} to {end_date}...")
+
+    all_data = []
+
+    print(f"Starting ingestion for {len(tickers)} tickers...")
+
+    # Load API key and initialize Vnstock
+    api_key = load_api_key()
+    
+    # Initialize Vnstock with API key if available
+    if api_key:
+        # CÁCH 1: Truyền API key trực tiếp vào constructor (khuyến nghị)
+        try:
+            vn = Vnstock(api_key=api_key)
+            print(f"Vnstock initialized with API key (rate limit: 60-180 requests/min)")
+        except TypeError:
+            # CÁCH 2: Nếu Vnstock không nhận tham số api_key, set qua environment variable
+            os.environ['VNSTOCK_API_KEY'] = api_key
+            vn = Vnstock()
+            print(f"Vnstock initialized with API key via env var (rate limit: 60-180 requests/min)")
+    else:
+        vn = Vnstock()
+        print(f"Vnstock initialized in guest mode (rate limit: 20 requests/min)")
+    
+    for ticker in tickers:
+        try:
+            # vnstock historical data (Vnstock 3.x) using KBS source
+            stock = vn.stock(symbol=ticker, source='KBS')
+            df = stock.quote.history(start=start_date, end=end_date)
+            
+            if df is not None and not df.empty:
+                # Standardize columns: date, ticker, open, high, low, close, volume
+                # Vnstock 3.x returns time, open, high, low, close, volume
+                df = df.rename(columns={'time': 'date'})
+                df['ticker'] = ticker
+                df = df[['date', 'ticker', 'open', 'high', 'low', 'close', 'volume']]
+                all_data.append(df)
+                print(f"Successfully fetched {ticker}: {len(df)} rows")
+            else:
+                print(f"No data for {ticker}")
+            
+            # Rate limit handling: Wait 2 seconds between requests (60 requests/min limit)
+            time.sleep(2)
+        except (Exception, SystemExit) as e:
+            print(f"Error fetching {ticker}: {str(e)}")
+            # If hit limit, wait longer
+            if "rate limit" in str(e).lower() or "systemexit" in str(type(e).__name__).lower():
+                print("Rate limit hit. Sleeping for 60 seconds before continuing...")
+                time.sleep(60)
+            continue  # Skip to next ticker
+
+
+    if all_data:
+        new_df = pd.concat(all_data, ignore_index=True)
+        # Ensure date is datetime type and compatible with Spark (microseconds)
+        new_df['date'] = pd.to_datetime(new_df['date']).dt.floor('us')
+        
+        print(f"Fetched {len(new_df)} new rows. Merging with existing data...")
+
+        # Try to read existing data again for merging
+        try:
+            existing_spark_df = spark.read.parquet(raw_path)
+            existing_df = existing_spark_df.toPandas()
+            print(f"Found existing data with {len(existing_df)} rows")
+            
+            # Combine new data with existing data
+            combined_df = pd.concat([existing_df, new_df], ignore_index=True)
+            
+            # Remove duplicates based on date and ticker, keeping the latest entry
+            combined_df = combined_df.drop_duplicates(subset=['date', 'ticker'], keep='last')
+            combined_df = combined_df.sort_values(['ticker', 'date']).reset_index(drop=True)
+            
+            print(f"After merge and deduplication: {len(combined_df)} rows")
+            final_df = combined_df
+        except Exception as e:
+            # File doesn't exist yet or error reading - use new data only
+            print(f"No existing data found during merge ({str(e)}). Using new data only.")
+            final_df = new_df
+        
+        # Write merged data back to Volume
+        final_spark_df = spark.createDataFrame(final_df)
+        final_spark_df.write.mode("overwrite").parquet(raw_path)
+                
+        print(f"Data saved successfully to Volume: {raw_path}")
+        print(f"Total rows in dataset: {len(final_df)}")
+    else:
+        print("No new data fetched.")
 
 if __name__ == "__main__":
-    # Test
-    metadata = ingest_data()
-    print(f"\n📊 METADATA: {metadata}")
+    ingest_data()

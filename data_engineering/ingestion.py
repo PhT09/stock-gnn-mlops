@@ -65,7 +65,7 @@ def ingest_data():
             # Check if there's actually new data to fetch
             if start_date > end_date:
                 print("Data is already up to date. No new data to fetch.")
-                return
+                return False  # No new data
         else:
             # Empty dataframe - do full load
             start_date = (datetime.now() - timedelta(days=years*365)).strftime('%Y-%m-%d')
@@ -115,8 +115,8 @@ def ingest_data():
             else:
                 print(f"No data for {ticker}")
             
-            # Rate limit handling: Wait 2 seconds between requests (60 requests/min limit)
-            time.sleep(2)
+            # Rate limit handling: Wait 1 second between requests (60 requests/min limit)
+            time.sleep(1)
         except (Exception, SystemExit) as e:
             print(f"Error fetching {ticker}: {str(e)}")
             # If hit limit, wait longer
@@ -159,8 +159,10 @@ def ingest_data():
                 
         print(f"Data saved successfully to Volume: {raw_path}")
         print(f"Total rows in dataset: {len(final_df)}")
+        return True  # New data fetched and saved
     else:
         print("No new data fetched.")
+        return False  # No new data
 
 if __name__ == "__main__":
     ingest_data()

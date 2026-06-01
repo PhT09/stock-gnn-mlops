@@ -1,88 +1,403 @@
 import os
 import yaml
 import pandas as pd
+from datetime import datetime, timedelta, timezone
+import logging
 from pyspark.sql import SparkSession, Window
 from pyspark.sql import functions as F
-from pyspark.ml.feature import VectorAssembler, StandardScaler
-from pyspark.ml.linalg import Vectors
+from pyspark.ml.feature import VectorAssembler
 from pyspark.ml.stat import Correlation
 
-def preprocess():
-    raw_path = "/Volumes/workspace/default/stock_data/raw/stock_data.parquet"
-    processed_path = "/Volumes/workspace/default/stock_data/processed/"
+# Configure logging
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(levelname)s - %(message)s',
+    datefmt='%Y-%m-%d %H:%M:%S'
+)
+logger = logging.getLogger(__name__)
+
+# UTILITY FUNCTIONS
+
+def get_current_session():
+    """Determine current trading session based on Vietnam time (UTC+7)
+    Returns:
+        - '(1)' for morning session (9:00 - 11:30)
+        - '(2)' for afternoon session (13:30 - 15:00)
+        - '(2)' as default for outside trading hours
+    """
+    vietnam_tz = timezone(timedelta(hours=7))
+    now = datetime.now(tz=vietnam_tz)
+    current_time = now.time()
     
-    spark = SparkSession.builder \
-        .appName("StockPreprocessing") \
-        .getOrCreate()
+    morning_start = datetime.strptime("09:00", "%H:%M").time()
+    afternoon_start = datetime.strptime("13:30", "%H:%M").time()
+    
+    if morning_start <= current_time < afternoon_start:
+        return '(1)'
+    else:
+        return '(2)'
 
-    # 1. Read raw Parquet files
+def initialize_spark(app_name="StockPreprocessing"):
+    """Initialize Spark session"""
+    return SparkSession.builder.appName(app_name).getOrCreate()
+
+# DATA LOADING FUNCTIONS
+
+def read_raw_data(spark, raw_path):
+    """Read raw data from parquet file
+    
+    Args:
+        spark: SparkSession
+        raw_path: Path to raw data parquet file
+        
+    Returns:
+        DataFrame: Raw data
+        int: Initial row count
+        int: Unique ticker count
+    """
+    logger.info("[READING RAW DATA]")
+    logger.info(f"Reading from: {raw_path}")
+    
     df = spark.read.parquet(raw_path)
+    initial_count = df.count()
+    ticker_count = df.select("ticker").distinct().count()
+    
+    logger.info("Raw data loaded successfully")
+    logger.info(f"  - Total rows: {initial_count:,}")
+    logger.info(f"  - Unique tickers: {ticker_count}")
+    logger.info(f"  - Columns: {len(df.columns)}")
+    
+    return df, initial_count, ticker_count
 
-    # 2. Clean data
-    df = df.dropna().dropDuplicates()
+# DATA CLEANING FUNCTIONS
+
+def clean_data(df, initial_count):
+    """Clean data by removing nulls and duplicates
+    
+    Args:
+        df: Input DataFrame
+        initial_count: Initial row count for logging
+        
+    Returns:
+        DataFrame: Cleaned data
+    """
+    logger.info("[DATA CLEANING]")
+    
+    # Remove null values
+    logger.info("Removing null values...")
+    df = df.dropna()
+    after_dropna = df.count()
+    logger.info(f"  - Rows after dropna: {after_dropna:,} (removed {initial_count - after_dropna:,})")
+    
+    # Remove duplicates
+    logger.info("Removing duplicates...")
+    df = df.dropDuplicates()
+    after_dedup = df.count()
+    logger.info(f"  - Rows after dedup: {after_dedup:,} (removed {after_dropna - after_dedup:,})")
+    
+    # Sort by ticker and date
+    logger.info("Sorting by ticker and date...")
     df = df.orderBy("ticker", "date")
+    logger.info("Data cleaning completed")
+    
+    return df
 
-    # 3. Feature Engineering with Window Functions
+# FEATURE ENGINEERING FUNCTIONS
+
+def engineer_features(df):
+    """Engineer features: returns, moving averages, volatility
+    
+    Args:
+        df: Input DataFrame
+        
+    Returns:
+        DataFrame: DataFrame with engineered features
+    """
+    logger.info("[FEATURE ENGINEERING]")
+    
     window_spec = Window.partitionBy("ticker").orderBy("date")
     
-    # Calculate returns with division by zero protection
+    # Calculate returns
+    logger.info("Calculating returns...")
     df = df.withColumn("prev_close", F.lag("close", 1).over(window_spec))
     df = df.withColumn("return", 
         F.when(F.col("prev_close") == 0, 0)
          .otherwise((F.col("close") - F.col("prev_close")) / F.col("prev_close"))
     )
+    logger.info("  Returns calculated")
     
-    # MA_5, MA_10
+    # Moving averages
+    logger.info("Calculating moving averages (MA_5, MA_10)...")
     df = df.withColumn("MA_5", F.avg("close").over(window_spec.rowsBetween(-4, 0)))
     df = df.withColumn("MA_10", F.avg("close").over(window_spec.rowsBetween(-9, 0)))
+    logger.info("  Moving averages calculated")
     
-    # Volatility (Rolling distance of return)
+    # Volatility
+    logger.info("Calculating volatility (20-day rolling std of returns)...")
     df = df.withColumn("volatility", F.stddev("return").over(window_spec.rowsBetween(-19, 0)))
+    logger.info("  Volatility calculated")
+    
+    return df
 
-    # 4. Create target label: 1 if Close price goes UP next day, 0 if DOWN
+def create_target_labels(df):
+    """Create target labels for prediction
+    
+    Args:
+        df: Input DataFrame
+        
+    Returns:
+        DataFrame: DataFrame with target labels
+        int: Row count after windowing operations
+    """
+    logger.info("[TARGET LABEL CREATION]")
+    
+    logger.info("Creating target labels (1=price up, 0=price down)...")
     lead_window = Window.partitionBy("ticker").orderBy("date")
     df = df.withColumn("next_close", F.lead("close", 1).over(lead_window))
     df = df.withColumn("target", F.when(F.col("next_close") > F.col("close"), 1).otherwise(0))
-
-    # Drop intermediate columns and rows with nulls (due to lag/lead)
+    logger.info("  Target labels created")
+    
+    # Drop rows with nulls (due to lag/lead)
+    logger.info("Removing rows with null values from windowing...")
+    before_dropna = df.count()
     df = df.dropna()
+    after_dropna = df.count()
+    after_windowing = df.count()
+    logger.info(f"  - Rows after windowing dropna: {after_windowing:,} (removed {before_dropna - after_dropna:,})")
+    
+    # Check target distribution
+    logger.info("Calculating target label distribution...")
+    target_dist = df.groupBy("target").count().collect()
+    logger.info("Target label distribution:")
+    for row in target_dist:
+        label = "UP" if row['target'] == 1 else "DOWN"
+        count = row['count']
+        pct = count / after_windowing * 100
+        logger.info(f"  - {label} (target={row['target']}): {count:,} ({pct:.2f}%)")
+    
+    return df, after_windowing
 
-    # 5. Normalization using StandardScaler
-    feature_cols = ["open", "high", "low", "close", "volume", "return", "MA_5", "MA_10", "volatility"]
-    assembler = VectorAssembler(inputCols=feature_cols, outputCol="features_vec")
-    df_vec = assembler.transform(df)
+def normalize_features(df, feature_cols):
+    """Normalize features using Z-score normalization
+    
+    Args:
+        df: Input DataFrame
+        feature_cols: List of feature column names to normalize
+        
+    Returns:
+        DataFrame: DataFrame with normalized features
+    """
+    logger.info("[FEATURE NORMALIZATION]")
+    
+    logger.info(f"Features to normalize: {', '.join(feature_cols)}")
+    logger.info("Using SQL-based Z-score normalization (mean=0, std=1)...")
+    
+    # Calculate mean and stddev for each feature column globally
+    logger.info("Computing statistics for normalization...")
+    stats = {}
+    for col_name in feature_cols:
+        stats[col_name] = df.select(
+            F.mean(col_name).alias('mean'),
+            F.stddev(col_name).alias('std')
+        ).collect()[0]
+        logger.info(f"  - {col_name}: mean={stats[col_name]['mean']:.4f}, std={stats[col_name]['std']:.4f}")
+    
+    # Apply normalization: (x - mean) / std
+    logger.info("Applying normalization...")
+    for col_name in feature_cols:
+        mean_val = stats[col_name]['mean']
+        std_val = stats[col_name]['std']
+        
+        # Avoid division by zero
+        if std_val > 0:
+            df = df.withColumn(
+                f"{col_name}_scaled",
+                (F.col(col_name) - mean_val) / std_val
+            )
+        else:
+            df = df.withColumn(f"{col_name}_scaled", F.lit(0.0))
+    
+    scaled_feature_cols = [f"{col}_scaled" for col in feature_cols]
+    logger.info(f"  {len(scaled_feature_cols)} features normalized")
+    
+    # Assemble scaled features into a single array column for convenience
+    logger.info("Assembling scaled features into array...")
+    df = df.withColumn("scaled_features", F.array(*scaled_feature_cols))
+    logger.info("  Features assembled into array column")
+    
+    return df
 
-    scaler = StandardScaler(inputCol="features_vec", outputCol="scaled_features", withMean=True, withStd=True)
-    scaler_model = scaler.fit(df_vec)
-    df = scaler_model.transform(df_vec)
+# DATA SAVING FUNCTIONS
 
-    # 6. Graph Dependency: Returns Correlation Matrix
-    # Pivot to get returns for all tickers per date
-    returns_df = df.groupBy("date").pivot("ticker").agg(F.first("return")).na.fill(0)
-    ticker_cols = [c for c in returns_df.columns if c != 'date']
+def save_processed_data(df, processed_path):
+    """Save processed data to parquet file
     
-    # Assemble returns into a single vector column
-    corr_assembler = VectorAssembler(inputCols=ticker_cols, outputCol="corr_features")
-    corr_df = corr_assembler.transform(returns_df)
+    Args:
+        df: DataFrame to save
+        processed_path: Base path for processed data
+        
+    Returns:
+        int: Final row count
+    """
+    logger.info("[SAVING PROCESSED DATA]")
     
-    # Pearson Correlation
-    matrix = Correlation.corr(corr_df, "corr_features").head()[0]
-    
-    # Convert matrix to a DataFrame for saving (optional but good practice)
-    # Here we just save the processed data and can export matrix as well
-    
-    # 7. Save outputs
-    
-    # Save processed data
+    # Save processed features
+    feature_output_path = processed_path + "stock_features.parquet"
+    logger.info(f"Saving processed features to: {feature_output_path}")
     df.select("date", "ticker", "scaled_features", "target") \
-      .write.mode("overwrite").parquet(processed_path + "stock_features.parquet")
+      .write.mode("overwrite").parquet(feature_output_path)
+    final_count = df.count()
+    logger.info(f"  Features saved: {final_count:,} rows")
     
-    # Save correlation matrix
-    matrix_array = matrix.toArray().tolist()
-    corr_pdf = pd.DataFrame(matrix_array, columns=ticker_cols)
-    corr_pdf.insert(0, "ticker", ticker_cols)
-    corr_spark_df = spark.createDataFrame(corr_pdf)
-    corr_spark_df.write.mode("overwrite").parquet(processed_path + "correlation_matrix.parquet")
+    return final_count
+
+# SORTING AND EXPORT FUNCTIONS
+
+def sort_price(spark=None, raw_path=None, output_dir=None):
+    logger.info("[SORTING STOCKS BY PRICE]")
     
+    # Initialize Spark if not provided
+    if spark is None:
+        spark = initialize_spark("SortStocksByPrice")
+    
+    # Set default paths
+    if raw_path is None:
+        raw_path = "/Volumes/workspace/default/stock_data/raw/stock_data.parquet"
+    if output_dir is None:
+        output_dir = "/Volumes/workspace/default/stock_data/processed/"
+    
+    # Get current date and session
+    today = datetime.now().date().strftime('%Y-%m-%d')
+    current_session = get_current_session()
+    logger.info(f"Current date: {today}")
+    logger.info(f"Current session: {current_session}")
+    
+    # Read raw data
+    df_raw = spark.read.parquet(raw_path)
+    
+    # Filter by today's date and session
+    session_pattern = f"{today}{current_session}"
+    df_today = df_raw.filter(F.col("date") == session_pattern)
+    
+    # Sort by close price descending
+    df_sorted = df_today.select("ticker", "close", "date").orderBy(F.desc("close"))
+    
+    # Collect results
+    sorted_list = df_sorted.collect()
+    
+    logger.info(f"Found {len(sorted_list)} stocks for session {current_session}")
+    
+    # Save to file
+    output_file = output_dir + "stock_desc_price.csv"
+    logger.info(f"Saving sorted stocks to: {output_file}")
+    
+    with open(output_file, 'w', encoding='utf-8') as f:
+        f.write("ticker, close_price\n")
+        for row in sorted_list:
+            f.write(f"{row['ticker']}, {row['close']:.2f}\n")
+    
+    logger.info(f"  Saved {len(sorted_list)} stocks to {output_file}")
+    
+    return sorted_list
+
+def sort_volume(spark=None, raw_path=None, output_dir=None):
+    logger.info("[SORTING STOCKS BY VOLUME]")
+    
+    # Initialize Spark if not provided
+    if spark is None:
+        spark = initialize_spark("SortStocksByVolume")
+    
+    # Set default paths
+    if raw_path is None:
+        raw_path = "/Volumes/workspace/default/stock_data/raw/stock_data.parquet"
+    if output_dir is None:
+        output_dir = "/Volumes/workspace/default/stock_data/processed/"
+    
+    # Get current date and session
+    today = datetime.now().date().strftime('%Y-%m-%d')
+    current_session = get_current_session()
+    logger.info(f"Current date: {today}")
+    logger.info(f"Current session: {current_session}")
+    
+    # Read raw data
+    df_raw = spark.read.parquet(raw_path)
+    
+    # Filter by today's date and session
+    session_pattern = f"{today}{current_session}"
+    df_today = df_raw.filter(F.col("date") == session_pattern)
+    
+    # Sort by volume descending
+    df_sorted = df_today.select("ticker", "volume", "date").orderBy(F.desc("volume"))
+    
+    # Collect results
+    sorted_list = df_sorted.collect()
+    
+    logger.info(f"Found {len(sorted_list)} stocks for session {current_session}")
+    
+    # Save to file
+    output_file = output_dir + "stock_desc_volume.csv"
+    logger.info(f"Saving sorted stocks to: {output_file}")
+    
+    with open(output_file, 'w', encoding='utf-8') as f:
+        f.write("ticker, volume\n")
+        for row in sorted_list:
+            f.write(f"{row['ticker']}, {row['volume']:,}\n")
+    
+    logger.info(f"  Saved {len(sorted_list)} stocks to {output_file}")
+    
+    return sorted_list
+
+# MAIN PREPROCESSING FUNCTION
+
+def preprocess(run_sorting=True):
+    """Main preprocessing function
+    
+    Args:
+        run_sorting: Whether to run sorting functions after preprocessing (default: True)
+    """
+    logger.info("STOCK DATA PREPROCESSING PIPELINE")
+    
+    # Paths
+    raw_path = "/Volumes/workspace/default/stock_data/raw/stock_data.parquet"
+    processed_path = "/Volumes/workspace/default/stock_data/processed/"
+    
+    # Initialize Spark
+    spark = initialize_spark("StockPreprocessing")
+    
+    # Step 1: Read raw data
+    df, initial_count, ticker_count = read_raw_data(spark, raw_path)
+    
+    # Step 2: Clean data
+    df = clean_data(df, initial_count)
+    
+    # Step 3: Engineer features
+    df = engineer_features(df)
+    
+    # Step 4: Create target labels
+    df, after_windowing = create_target_labels(df)
+    
+    # Step 5: Normalize features
+    feature_cols = ["open", "high", "low", "close", "volume", "return", "MA_5", "MA_10", "volatility"]
+    df = normalize_features(df, feature_cols)
+    
+    # Step 6: Save processed data
+    final_count = save_processed_data(df, processed_path)
+    
+    # Step 7: Sort by price and volume (if requested)
+    if run_sorting:
+        logger.info("\n[RUNNING SORTING OPERATIONS]")
+        sort_price(spark)
+        sort_volume(spark)
+    
+    # Summary
+    
+    logger.info("PREPROCESSING SUMMARY")
+    logger.info(f"Initial rows:      {initial_count:,}")
+    logger.info(f"Final rows:        {final_count:,}")
+    logger.info(f"Rows removed:      {initial_count - final_count:,}")
+    logger.info(f"Unique tickers:    {ticker_count}")
+    logger.info(f"Features per row:  {len(feature_cols)}")
+    logger.info("PREPROCESSING COMPLETED SUCCESSFULLY")
+
 if __name__ == "__main__":
     preprocess()

@@ -8,6 +8,7 @@ from email.mime.text import MIMEText
 from email.mime.image import MIMEImage
 from email.mime.base import MIMEBase
 from email import encoders
+from dotenv import load_dotenv
 
 def generate_report(model, df, metrics, data_metadata=None):
     print("Đang tạo báo cáo Insight & Visualization...")
@@ -106,15 +107,37 @@ def generate_report(model, df, metrics, data_metadata=None):
     plt.close()
     
     # ===== TẠO EMAIL MỚI =====
-    # 10. Metadata
+    # 10. Auto-fetch metadata from RAW data
+    from pyspark.sql import SparkSession
+    from datetime import datetime
+    
     data_info = ""
-    if data_metadata:
-        latest_date_str = data_metadata.get('latest_date', 'N/A')
-        days_old = data_metadata.get('days_old', 'N/A')
-        total_rows = data_metadata.get('total_rows', 'N/A')
+    try:
+        spark = SparkSession.builder.appName("GetMetadata").getOrCreate()
+        raw_df = spark.read.parquet("/Volumes/workspace/default/stock_data/raw/stock_data.parquet")
         
-        data_freshness = "🟢 Mới" if days_old <= 2 else f"🟡 Cũ {days_old} ngày"
-        data_info = f"<br><b>📅 Dữ liệu:</b> Cập nhật đến {latest_date_str} ({data_freshness}) - {total_rows:,} mẫu<br>"
+        # Get metadata
+        latest_date_val = raw_df.selectExpr("max(date) as max_date").collect()[0][0]
+        total_rows = raw_df.count()
+        
+        # Calculate days old
+        latest_date_str = latest_date_val.strftime('%Y-%m-%d')
+        days_old = (datetime.now() - latest_date_val).days
+        
+        # Determine freshness
+        if days_old == 0:
+            data_freshness = "🟢 MỚI NHẤT (hôm nay)"
+        elif days_old == 1:
+            data_freshness = "🟢 Hôm qua"
+        elif days_old <= 2:
+            data_freshness = f"🟡 {days_old} ngày trước"
+        else:
+            data_freshness = f"🔴 Cũ {days_old} ngày"
+        
+        data_info = f"<br><b>📅 Dữ liệu:</b> Cập nhật đến {latest_date_str} ({data_freshness}) - {total_rows:,} dòng<br>"
+    except Exception as e:
+        print(f"   ⚠️  Could not fetch metadata: {e}")
+        data_info = "<br><b>📅 Dữ liệu:</b> Không xác định<br>"
     
     # 11. Build HTML content
     # Top UP table
@@ -181,6 +204,9 @@ def generate_report(model, df, metrics, data_metadata=None):
     
     # ===== GỬI EMAIL =====
     # 13. Gửi Email (Nếu có cấu hình trong .env)
+    # Load .env file to read email config
+    env_path = "/Workspace/Users/vphat545@gmail.com/stock-gnn-mlops/.env"
+    load_dotenv(env_path)
     sender_email = os.getenv("SENDER_EMAIL")
     sender_password = os.getenv("SENDER_PASSWORD")
     receiver_email = os.getenv("RECEIVER_EMAIL")

@@ -2,54 +2,65 @@ import sys
 import os
 sys.path.append('/Workspace/Users/vphat545@gmail.com/stock-gnn-mlops')
 
-from data_engineering.ingestion import ingest_data
-from data_engineering.preprocessing import clean_data
-from data_engineering.feature_engineering import engineer_features
 from ml_model.train import train
+from mlops.reporter import generate_report
 
-def run_pipeline(force_train=False):
-    print("--- Starting MLOps Pipeline ---")
+def run_pipeline():
+    """
+    MLOps Pipeline - TRAIN & EMAIL ONLY
     
-    # 1. Ingestion with metadata
-    metadata = ingest_data(check_freshness=True, force=force_train)
+    ⚠️  KHÔNG cào data! Data đã được cào sẵn vào PROCESSED bởi job khác.
     
-    if not metadata.get("success"):
-        print(f"❌ Pipeline stopped due to ingestion failure: {metadata.get('error')}")
-        return
+    Pipeline này CHỈ:
+    1. Đọc PROCESSED có sẵn tại /Volumes/workspace/default/stock_data/processed/
+    2. Train XGBoost model
+    3. Gửi email report
     
-    # Print ingestion summary
-    print(f"\n📊 DATA SUMMARY:")
-    print(f"  Latest date: {metadata.get('latest_date')}")
-    print(f"  Date range: {metadata.get('oldest_date')} to {metadata.get('latest_date')}")
-    print(f"  Total rows: {metadata.get('total_rows'):,}")
-    print(f"  Data age: {metadata.get('days_old')} days old")
+    Thời gian: ~3-4 phút (nhanh hơn nhiều vì không cào data!)
+    """
+    print("=" * 80)
+    print("🚀 Starting MLOps Pipeline")
+    print("   Mode: TRAIN & EMAIL ONLY (No data ingestion)")
+    print("=" * 80)
     
-    if metadata.get('warnings'):
-        for warning in metadata['warnings']:
-            print(f"  {warning}")
+    # Step 1: Model Training
+    print("\n🤖 Step 1: Model Training")
+    print("   📂 Reading from: /Volumes/workspace/default/stock_data/processed/stock_features.parquet")
     
-    # 2. Check if we have new data
-    has_new_data = metadata.get('has_new_data', False)
+    try:
+        model, df, metrics = train()
+        
+        print("\n✅ Training completed!")
+        print(f"   📊 Accuracy: {metrics.get('accuracy', 0):.3f}")
+        print(f"   📊 F1 Score: {metrics.get('f1_score', 0):.3f}")
+        print(f"   📊 AUC-ROC:  {metrics.get('auc_roc', 0):.3f}")
+        
+    except Exception as e:
+        print(f"\n❌ Training FAILED: {str(e)}")
+        import traceback
+        traceback.print_exc()
+        raise
     
-    if not has_new_data and not force_train:
-        print("\n⏸️  PIPELINE PAUSED: Không có data mới")
-        print(f"   Lần xử lý cuối: {metadata.get('last_processed_at')}")
-        print(f"   Dùng run_pipeline(force_train=True) để bắt buộc train")
-        return
+    # Step 2: Report & Email
+    print("\n📧 Step 2: Generate Report & Send Email")
+    try:
+        generate_report(model, df, metrics)
+        print("\n✅ Email sent successfully!")
+        
+    except Exception as e:
+        print(f"\n⚠️  Report generation failed (non-critical): {str(e)}")
+        # Email failure is not critical, don't raise
     
-    print("\n🚀 TIẾP TỤC PIPELINE: Phát hiện data mới hoặc force mode")
-    
-    from mlops.reporter import generate_report
-    # 3. Training
-    model, df, metrics = train()
-    
-    # 4. Report & Insights & Email
-    generate_report(model, df, metrics, data_metadata=metadata)
-    
-    print("\n--- Pipeline Completed Successfully ---")
-    print(f"✅ Trained on {metadata.get('total_rows'):,} samples")
-    print(f"✅ Data up to: {metadata.get('latest_date')}")
-    print(f"✅ Model metrics: Accuracy={metrics.get('accuracy', 0):.3f}, F1={metrics.get('f1_score', 0):.3f}")
+    # Summary
+    print("\n" + "=" * 80)
+    print("✅ PIPELINE COMPLETED")
+    print("=" * 80)
+    print(f"📊 Final Metrics:")
+    print(f"   • Accuracy: {metrics.get('accuracy', 0):.3f}")
+    print(f"   • F1 Score: {metrics.get('f1_score', 0):.3f}")
+    print(f"   • AUC-ROC: {metrics.get('auc_roc', 0):.3f}")
+    print(f"\n📍 MLflow Experiment: /Shared/Stock_Prediction_XGBoost")
+    print("=" * 80)
 
 if __name__ == "__main__":
     run_pipeline()

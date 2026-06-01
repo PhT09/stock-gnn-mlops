@@ -1,12 +1,12 @@
 import os
 import yaml
 import pandas as pd
-from datetime import datetime, timedelta, time as dt_time
+from datetime import datetime, timedelta, time as dt_time, timezone
 import time
 from pyspark.sql import SparkSession
 from dotenv import load_dotenv
 
-from vnstock import Vnstock
+from vnstock.api.quote import Quote
 
 def load_config():
     """Load configuration from YAML file"""
@@ -24,6 +24,8 @@ def load_api_key():
         
         if api_key:
             print(f"VNSTOCK API key loaded from .env file")
+            # Set as environment variable for vnstock to use
+            os.environ['VNSTOCK_API_KEY'] = api_key
             return api_key
         else:
             print("VNSTOCK_API not found in .env file. Using guest mode.")
@@ -33,13 +35,15 @@ def load_api_key():
         return None
 
 def get_trading_session():
-    """Determine current trading session based on time
+    """Determine current trading session based on Vietnam time (UTC+7)
     Returns:
         - '(1)' for morning session (9:00 - 11:30)
         - '(2)' for afternoon session (13:30 - 15:00)
         - '(2)' as default for outside trading hours
     """
-    now = datetime.now()
+    # Vietnam timezone is UTC+7
+    vietnam_tz = timezone(timedelta(hours=7))
+    now = datetime.now(tz=vietnam_tz)
     current_time = now.time()
     
     # Morning session: 9:00 - 11:30
@@ -51,12 +55,12 @@ def get_trading_session():
     afternoon_end = datetime.strptime("15:00", "%H:%M").time()
     
     if morning_start <= current_time < afternoon_start:
-        return '(1)'
+        return '(1)', current_time, morning_start, afternoon_start
     elif afternoon_start <= current_time:
-        return '(2)'
+        return '(2)', current_time, afternoon_start
     else:
         # Default to afternoon session if outside trading hours
-        return '(2)'
+        return '(2)', current_time, morning_start, morning_end, afternoon_start, afternoon_end
 
 def check_existing_data(spark, raw_path):
     """Check if data file exists and return last date if available
@@ -114,14 +118,15 @@ def determine_fetch_strategy(file_exists, last_date, years):
         print(f"Strategy: Data includes today. Fetching today's intraday to update")
         return False, True, None, None
 
-def fetch_historical_data(vn, ticker, start_date, end_date):
-    """Fetch historical data for a ticker using quote.history()
+def fetch_historical_data(ticker, start_date, end_date):
+    """Fetch historical data for a ticker using Quote.history()
     Returns:
         pd.DataFrame or None
     """
     try:
-        stock = vn.stock(symbol=ticker, source='KBS')
-        df_history = stock.quote.history(start=start_date, end=end_date)
+        # Use new API: Quote(symbol, source)
+        quote = Quote(symbol=ticker, source='KBS')
+        df_history = quote.history(start=start_date, end=end_date)
         
         if df_history is not None and not df_history.empty:
             # Standardize columns
@@ -144,12 +149,11 @@ def fetch_historical_data(vn, ticker, start_date, end_date):
             time.sleep(60)
         return None
 
-def fetch_intraday_data(vn, ticker, session_marker):
-    """Fetch today's intraday data for a ticker using quote.intraday()
+def fetch_intraday_data(ticker, session_marker):
+    """Fetch today's intraday data for a ticker using Quote.intraday()
     Filters data by trading session and calculates OHLCV for that session
     
     Args:
-        vn: Vnstock instance
         ticker: Stock ticker symbol
         session_marker: '(1)' for morning or '(2)' for afternoon
     
@@ -157,8 +161,9 @@ def fetch_intraday_data(vn, ticker, session_marker):
         pd.DataFrame or None
     """
     try:
-        stock = vn.stock(symbol=ticker, source='KBS')
-        df_intraday = stock.quote.intraday(page_size=10000)
+        # Use new API: Quote(symbol, source)
+        quote = Quote(symbol=ticker, source='KBS')
+        df_intraday = quote.intraday(page_size=10000)
         
         if df_intraday is not None and not df_intraday.empty:
             # Standardize columns
@@ -196,10 +201,10 @@ def fetch_intraday_data(vn, ticker, session_marker):
             ohlcv_data = {
                 'date': f"{session_date}{session_marker}",
                 'ticker': ticker,
-                'open': df_session['open'].iloc[0],  # First price in session
-                'high': df_session['high'].max(),     # Highest price in session
-                'low': df_session['low'].min(),       # Lowest price in session
-                'close': df_session['close'].iloc[-1], # Last price in session
+                'open': df_session['price'].iloc[0],  # First price in session
+                'high': df_session['price'].max(),     # Highest price in session
+                'low': df_session['price'].min(),       # Lowest price in session
+                'close': df_session['price'].iloc[-1], # Last price in session
                 'volume': df_session['volume'].sum()   # Total volume in session
             }
             
@@ -219,26 +224,6 @@ def fetch_intraday_data(vn, ticker, session_marker):
             print("Rate limit hit. Sleeping for 60 seconds before continuing...")
             time.sleep(60)
         return None
-
-def initialize_vnstock(api_key):
-    """Initialize Vnstock with or without API key
-    Returns:
-        Vnstock instance
-    """
-    if api_key:
-        try:
-            vn = Vnstock(api_key=api_key)
-            print(f"Vnstock initialized with API key (rate limit: 60-180 requests/min)")
-            return vn
-        except TypeError:
-            os.environ['VNSTOCK_API_KEY'] = api_key
-            vn = Vnstock()
-            print(f"Vnstock initialized with API key via env var (rate limit: 60-180 requests/min)")
-            return vn
-    else:
-        vn = Vnstock()
-        print(f"Vnstock initialized in guest mode (rate limit: 20 requests/min)")
-        return vn
 
 def merge_and_save_data(spark, raw_path, new_df, existing_df):
     """Merge new data with existing data and save to parquet
@@ -292,14 +277,17 @@ def ingest_data():
         file_exists, last_date, years
     )
     
-    # Initialize Vnstock
+    # Load API key (if available, it will be set as env var for vnstock)
     api_key = load_api_key()
-    vn = initialize_vnstock(api_key)
+    if api_key:
+        print(f"Vnstock will use API key (rate limit: 60-180 requests/min)")
+    else:
+        print(f"Vnstock will run in guest mode (rate limit: 20 requests/min)")
     
     # Get current trading session ONCE (only needed if fetching intraday)
     session_marker = None
     if fetch_intraday:
-        session_marker = get_trading_session()
+        session_marker = get_trading_session()[0]  # Only get the session marker
         print(f"Current trading session: {session_marker}")
     
     # Collect all data
@@ -311,17 +299,17 @@ def ingest_data():
     for ticker in tickers:
         # Fetch historical data if needed
         if fetch_history:
-            df_history = fetch_historical_data(vn, ticker, history_start, history_end)
+            df_history = fetch_historical_data(ticker, history_start, history_end)
             if df_history is not None:
                 all_history_data.append(df_history)
             time.sleep(0.5)  # Rate limit handling
         
         # Fetch intraday data if needed
         if fetch_intraday:
-            df_intraday = fetch_intraday_data(vn, ticker, session_marker)
+            df_intraday = fetch_intraday_data(ticker, session_marker)
             if df_intraday is not None:
                 all_intraday_data.append(df_intraday)
-            time.sleep(0.5)  # Rate limit handling
+            time.sleep(0)  # Rate limit handling
     
     # Combine all fetched data
     all_data = []

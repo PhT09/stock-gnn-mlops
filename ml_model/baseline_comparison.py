@@ -39,16 +39,26 @@ matplotlib.use('Agg')  # Non-interactive backend for Databricks
 
 def load_data(data_path):
     """Load and prepare data exactly like XGBoost training"""
+    # Fallback to local downloaded_data if Databricks volume path does not exist
+    if not os.path.exists(data_path):
+        local_path = "downloaded_data"
+        if os.path.exists(local_path):
+            print(f"⚠️ Databricks volume path '{data_path}' not found. Falling back to local: '{local_path}'")
+            data_path = local_path
+            
     print(f"\n📂 Loading data from: {data_path}")
     
     try:
         df = pd.read_parquet(data_path)
         print(f"   ✅ Loaded {len(df):,} rows")
         
+        # Drop rows with null targets (latest day's data)
+        df_train = df.dropna(subset=['target']).copy()
+        
         # Extract features from Spark ML DenseVector
         print("   🔄 Extracting features from DenseVector...")
-        X = np.vstack(df['scaled_features'].apply(lambda x: x['values']).values)
-        y = df['target'].values
+        X = np.vstack(df_train['scaled_features'].apply(lambda x: x['values']).values)
+        y = df_train['target'].values
         
         # Time-based split (80/20, no shuffle)
         split_idx = int(len(df) * 0.8)
@@ -293,9 +303,15 @@ def main():
     
     # Paths - READ DIRECTLY FROM VOLUME (where real data is)
     data_path = "/Volumes/workspace/default/stock_data/processed/stock_features.parquet"
-    xgboost_metrics_path = "/Workspace/Users/vphat545@gmail.com/stock-gnn-mlops/models/best_metrics.json"
-    results_json = "/Workspace/Users/vphat545@gmail.com/stock-gnn-mlops/models/baseline_comparison_results.json"
-    results_png = "/Workspace/Users/vphat545@gmail.com/stock-gnn-mlops/models/baseline_comparison.png"
+    workspace_root = "/Workspace/Users/vphat545@gmail.com/stock-gnn-mlops"
+    if "DATABRICKS_RUNTIME_VERSION" in os.environ:
+        xgboost_metrics_path = f"{workspace_root}/models/best_metrics.json"
+        results_json = f"{workspace_root}/models/baseline_comparison_results.json"
+        results_png = f"{workspace_root}/models/baseline_comparison.png"
+    else:
+        xgboost_metrics_path = "models/best_metrics.json"
+        results_json = "models/baseline_comparison_results.json"
+        results_png = "models/baseline_comparison.png"
     
     try:
         # Load data

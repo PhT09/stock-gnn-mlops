@@ -21,20 +21,48 @@ class StockPredictorLocal:
             print(f"❌ Failed to load model: {e}")
             self.model = None
     
+    def _align_features(self, features: pd.DataFrame):
+        if not self.model:
+            raise ValueError("Model is not loaded.")
+        
+        aligned = features.copy()
+        try:
+            booster = self.model.get_booster()
+            expected_features = booster.feature_names
+            if expected_features:
+                for col in expected_features:
+                    if col not in aligned.columns:
+                        aligned[col] = 0.0
+                aligned = aligned[expected_features]
+            elif hasattr(self.model, "n_features_in_"):
+                n_feats = self.model.n_features_in_
+                if aligned.shape[1] != n_feats:
+                    print(f"⚠️ Feature count mismatch. Model expects {n_feats}, input has {aligned.shape[1]}. Slicing/padding.")
+                    if aligned.shape[1] > n_feats:
+                        aligned = aligned.iloc[:, :n_feats]
+                    else:
+                        for i in range(aligned.shape[1], n_feats):
+                            aligned[f"feat_{i}"] = 0.0
+        except Exception as e:
+            print(f"⚠️ Warning aligning features: {e}")
+        return aligned
+
     def predict(self, features: pd.DataFrame):
         """
         Predict stock movement
         
         Args:
-            features: DataFrame with 9 features [ma5, ma10, ma20, rsi, macd, 
-                     volatility_20, log_return, open, close]
+            features: DataFrame with 17 features [return_1d, return_3d, return_5d, 
+                     return_10d, price_vs_ma5, price_vs_ma10, ma5_vs_ma10, 
+                     volume_ratio, volume_change, volatility_5, volatility_10, 
+                     oc_return, hl_range, close_position, return_lag1, 
+                     return_lag2, return_lag3]
         
         Returns:
             predictions: 0=DOWN, 1=UP
         """
-        if not self.model:
-            raise ValueError("Model is not loaded.")
-        return self.model.predict(features)
+        aligned_features = self._align_features(features)
+        return self.model.predict(aligned_features)
     
     def predict_proba(self, features: pd.DataFrame):
         """
@@ -43,9 +71,8 @@ class StockPredictorLocal:
         Returns:
             probabilities: [prob_down, prob_up]
         """
-        if not self.model:
-            raise ValueError("Model is not loaded.")
-        return self.model.predict_proba(features)
+        aligned_features = self._align_features(features)
+        return self.model.predict_proba(aligned_features)
 
 
 if __name__ == "__main__":
@@ -55,15 +82,23 @@ if __name__ == "__main__":
     if predictor.model:
         print("\n🧪 Testing with dummy data...")
         features = pd.DataFrame({
-            'ma5': [100.5],
-            'ma10': [102.3],
-            'ma20': [105.1],
-            'rsi': [65.2],
-            'macd': [1.2],
-            'volatility_20': [0.02],
-            'log_return': [0.01],
-            'open': [100.0],
-            'close': [101.0]
+            "return_1d": [0.01],
+            "return_3d": [0.02],
+            "return_5d": [0.03],
+            "return_10d": [0.05],
+            "price_vs_ma5": [1.02],
+            "price_vs_ma10": [1.04],
+            "ma5_vs_ma10": [1.02],
+            "volume_ratio": [1.2],
+            "volume_change": [0.1],
+            "volatility_5": [0.015],
+            "volatility_10": [0.018],
+            "oc_return": [0.008],
+            "hl_range": [0.02],
+            "close_position": [0.75],
+            "return_lag1": [0.005],
+            "return_lag2": [-0.002],
+            "return_lag3": [0.001]
         })
         
         pred = predictor.predict(features)

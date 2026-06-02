@@ -149,79 +149,105 @@ def clean_data(df, initial_count):
 # FEATURE ENGINEERING FUNCTIONS
 
 def engineer_features(df):
-    """Engineer features: returns, moving averages, volatility
+    """Engineer features exactly matching the user's reference code
     
     Args:
         df: Input DataFrame
         
     Returns:
-        DataFrame: DataFrame with engineered features
+        DataFrame: DataFrame with 16 engineered features
     """
     logger.info("[FEATURE ENGINEERING]")
     
     window_spec = Window.partitionBy("ticker").orderBy("date")
     
-    # Calculate returns
-    logger.info("Calculating returns...")
-    df = df.withColumn("prev_close", F.lag("close", 1).over(window_spec))
-    df = df.withColumn("return", 
-        F.when(F.col("prev_close") == 0, 0)
-         .otherwise((F.col("close") - F.col("prev_close")) / F.col("prev_close"))
-    )
-    logger.info("  Returns calculated")
+    # Helper lag columns for computations
+    df = df.withColumn("prev_close_1", F.lag("close", 1).over(window_spec))
+    df = df.withColumn("prev_close_3", F.lag("close", 3).over(window_spec))
+    df = df.withColumn("prev_close_5", F.lag("close", 5).over(window_spec))
+    df = df.withColumn("prev_close_10", F.lag("close", 10).over(window_spec))
+    df = df.withColumn("prev_volume_1", F.lag("volume", 1).over(window_spec))
     
-    # Moving averages
-    logger.info("Calculating moving averages (MA_5, MA_10)...")
-    df = df.withColumn("MA_5", F.avg("close").over(window_spec.rowsBetween(-4, 0)))
-    df = df.withColumn("MA_10", F.avg("close").over(window_spec.rowsBetween(-9, 0)))
-    logger.info("  Moving averages calculated")
+    # 1. Return Features
+    df = df.withColumn("return_1d", F.when(df.prev_close_1 == 0, 0.0).otherwise((df.close - df.prev_close_1) / df.prev_close_1))
+    df = df.withColumn("return_3d", F.when(df.prev_close_3 == 0, 0.0).otherwise((df.close - df.prev_close_3) / df.prev_close_3))
+    df = df.withColumn("return_5d", F.when(df.prev_close_5 == 0, 0.0).otherwise((df.close - df.prev_close_5) / df.prev_close_5))
+    df = df.withColumn("return_10d", F.when(df.prev_close_10 == 0, 0.0).otherwise((df.close - df.prev_close_10) / df.prev_close_10))
     
-    # Volatility
-    logger.info("Calculating volatility (20-day rolling std of returns)...")
-    df = df.withColumn("volatility", F.stddev("return").over(window_spec.rowsBetween(-19, 0)))
-    logger.info(" Volatility calculated")
+    # 2. Moving Average Features
+    df = df.withColumn("ma5", F.avg("close").over(window_spec.rowsBetween(-4, 0)))
+    df = df.withColumn("ma10", F.avg("close").over(window_spec.rowsBetween(-9, 0)))
     
+    df = df.withColumn("price_vs_ma5", F.when(df.ma5 == 0, 1.0).otherwise(df.close / df.ma5))
+    df = df.withColumn("price_vs_ma10", F.when(df.ma10 == 0, 1.0).otherwise(df.close / df.ma10))
+    df = df.withColumn("ma5_vs_ma10", F.when(df.ma10 == 0, 1.0).otherwise(df.ma5 / df.ma10))
+    
+    # 3. Volume Features
+    df = df.withColumn("avg_vol20", F.avg("volume").over(window_spec.rowsBetween(-19, 0)))
+    df = df.withColumn("volume_ratio", F.when(df.avg_vol20 == 0, 1.0).otherwise(df.volume / df.avg_vol20))
+    df = df.withColumn("volume_change", F.when(df.prev_volume_1 == 0, 0.0).otherwise((df.volume - df.prev_volume_1) / df.prev_volume_1))
+    
+    # 4. Volatility Features
+    df = df.withColumn("volatility_5", F.stddev("return_1d").over(window_spec.rowsBetween(-4, 0)))
+    df = df.withColumn("volatility_10", F.stddev("return_1d").over(window_spec.rowsBetween(-9, 0)))
+    
+    # 5. Intraday Features
+    df = df.withColumn("oc_return", F.when(df.open == 0, 0.0).otherwise(df.close / df.open - 1.0))
+    df = df.withColumn("hl_range", F.when(df.close == 0, 0.0).otherwise((df.high - df.low) / df.close))
+    df = df.withColumn("close_position", 
+                       F.when((df.high - df.low) == 0, 0.5)
+                        .otherwise((df.close - df.low) / (df.high - df.low)))
+    
+    # 6. Lag Features
+    df = df.withColumn("return_lag1", F.lag("return_1d", 1).over(window_spec))
+    df = df.withColumn("return_lag2", F.lag("return_1d", 2).over(window_spec))
+    df = df.withColumn("return_lag3", F.lag("return_1d", 3).over(window_spec))
+    
+    # Drop temporary helper columns
+    temp_cols = ["prev_close_1", "prev_close_3", "prev_close_5", "prev_close_10", "prev_volume_1", "ma5", "ma10", "avg_vol20"]
+    df = df.drop(*temp_cols)
+    
+    logger.info("  16 features engineered successfully")
     return df
 
 def create_target_labels(df):
-    """Create target labels for prediction
+    """Create target labels for prediction (1=price up, 0=price down, null=latest row)
     
     Args:
         df: Input DataFrame
         
     Returns:
         DataFrame: DataFrame with target labels
-        int: Row count after windowing operations
+        int: Row count
     """
     logger.info("[TARGET LABEL CREATION]")
     
-    logger.info("Creating target labels (1=price up, 0=price down)...")
+    logger.info("Creating target labels (1=price up, 0=price down, null=latest)...")
     lag_window = Window.partitionBy("ticker").orderBy("date")
-    df = df.withColumn("prev_close", F.lag("close", 1).over(lag_window))
+    df = df.withColumn("next_close", F.lead("close", 1).over(lag_window))
+    
+    # Target is null if next_close is null (latest day's data), otherwise 1 or 0
     df = df.withColumn("target", 
-        F.when(F.col("close") > F.col("prev_close"), 1)
+        F.when(F.col("next_close").isNull(), F.lit(None).cast("integer"))
+         .when(F.col("next_close") > F.col("close"), 1)
          .otherwise(0))
-    logger.info("  Target labels created")
+         
+    df = df.drop("next_close")
+    row_count = df.count()
+    logger.info(f"  Target labels created. Total rows: {row_count:,}")
     
-    # Drop rows with nulls (due to lag/lead)
-    logger.info("Removing first day of each ticker (no previous price)...")
-    before_dropna = df.count()
-    df = df.filter(F.col("prev_close").isNotNull())
-    df = df.drop("prev_close")
-    after_windowing = df.count()
-    logger.info(f"  Rows after filtering: {after_windowing:,} (removed {before_dropna - after_windowing:,})")
-    
-    # Check target distribution
-    logger.info("Calculating target label distribution...")
-    target_dist = df.groupBy("target").count().collect()
+    # Check target distribution (ignoring nulls)
+    logger.info("Calculating target label distribution (excluding latest day)...")
+    target_dist = df.dropna(subset=["target"]).groupBy("target").count().collect()
+    total_labeled = sum(row['count'] for row in target_dist)
     logger.info("Target label distribution:")
     for row in target_dist:
         label = "UP" if row['target'] == 1 else "DOWN"
         count = row['count']
-        pct = count / after_windowing * 100
+        pct = count / total_labeled * 100 if total_labeled > 0 else 0
         logger.info(f"  - {label} (target={row['target']}): {count:,} ({pct:.2f}%)")
     
-    return df, after_windowing
+    return df, row_count
 
 def normalize_features(df, feature_cols):
     """Normalize features using Z-score normalization
@@ -231,7 +257,7 @@ def normalize_features(df, feature_cols):
         feature_cols: List of feature column names to normalize
         
     Returns:
-        DataFrame: DataFrame with normalized features
+        DataFrame: DataFrame with normalized features and scaled_features VectorUDT column
     """
     logger.info("[FEATURE NORMALIZATION]")
     
@@ -266,6 +292,12 @@ def normalize_features(df, feature_cols):
     scaled_feature_cols = [f"{col}_scaled" for col in feature_cols]
     logger.info(f"  ✓ {len(scaled_feature_cols)} features normalized")
     
+    # Assemble scaled features into a single VectorUDT column for training compatibility
+    logger.info("Assembling scaled features into VectorUDT...")
+    assembler = VectorAssembler(inputCols=scaled_feature_cols, outputCol="scaled_features")
+    df = assembler.transform(df)
+    logger.info("  ✓ Features assembled into scaled_features column")
+    
     return df
 
 # DATA SAVING FUNCTIONS
@@ -284,7 +316,7 @@ def save_processed_data(df, processed_path, feature_cols):
     logger.info("[SAVING PROCESSED DATA]")
     
     # Build list of columns to save
-    columns_to_save = ["date", "ticker"]
+    columns_to_save = ["date", "ticker", "scaled_features", "target"]
     
     # Add original feature columns
     columns_to_save.extend(feature_cols)
@@ -293,8 +325,9 @@ def save_processed_data(df, processed_path, feature_cols):
     scaled_cols = [f"{col}_scaled" for col in feature_cols]
     columns_to_save.extend(scaled_cols)
     
-    # Add target column
-    columns_to_save.append("target")
+    # Add close column for visualization/reporting if available
+    if "close" in df.columns:
+        columns_to_save.append("close")
     
     logger.info(f"Columns to save: {', '.join(columns_to_save)}")
     
@@ -408,17 +441,21 @@ def sort_volume(spark=None, raw_path=None, output_dir=None):
 
 # MAIN PREPROCESSING FUNCTION
 
-def preprocess(run_sorting=True):
+def preprocess(run_sorting=True, raw_path=None, processed_path=None):
     """Main preprocessing function
     
     Args:
         run_sorting: Whether to run sorting functions after preprocessing (default: True)
+        raw_path: Custom raw data path (default: volume path)
+        processed_path: Custom processed data path (default: volume path)
     """
     logger.info("STOCK DATA PREPROCESSING PIPELINE")
     
     # Paths
-    raw_path = "/Volumes/workspace/default/stock_data/raw/stock_data.parquet"
-    processed_path = "/Volumes/workspace/default/stock_data/processed/"
+    if raw_path is None:
+        raw_path = "/Volumes/workspace/default/stock_data/raw/stock_data.parquet"
+    if processed_path is None:
+        processed_path = "/Volumes/workspace/default/stock_data/processed/"
     
     # Initialize Spark
     spark = initialize_spark("StockPreprocessing")
@@ -430,13 +467,35 @@ def preprocess(run_sorting=True):
     df = clean_data(df, initial_count)
     
     # Step 3: Engineer features
-    # df = engineer_features(df)
+    df = engineer_features(df)
     
     # Step 4: Create target labels
     df, after_windowing = create_target_labels(df)
     
     # Step 5: Normalize features
-    feature_cols = ["open", "high", "low", "close", "volume"]
+    feature_cols = [
+        "return_1d",
+        "return_3d",
+        "return_5d",
+        "return_10d",
+        "price_vs_ma5",
+        "price_vs_ma10",
+        "ma5_vs_ma10",
+        "volume_ratio",
+        "volume_change",
+        "volatility_5",
+        "volatility_10",
+        "oc_return",
+        "hl_range",
+        "close_position",
+        "return_lag1",
+        "return_lag2",
+        "return_lag3"
+    ]
+    
+    # Drop rows with nulls in features before normalization
+    df = df.dropna(subset=feature_cols)
+    
     df = normalize_features(df, feature_cols)
     
     # Step 6: Save processed data
@@ -445,8 +504,8 @@ def preprocess(run_sorting=True):
     # Step 7: Sort by price and volume (if requested)
     if run_sorting:
         logger.info("\n[RUNNING SORTING OPERATIONS]")
-        sort_price(spark)
-        sort_volume(spark)
+        sort_price(spark, raw_path=raw_path, output_dir=processed_path)
+        sort_volume(spark, raw_path=raw_path, output_dir=processed_path)
     
     # Summary
     

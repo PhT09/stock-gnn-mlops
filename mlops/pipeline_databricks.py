@@ -2,6 +2,9 @@ import sys
 import os
 
 # Thêm project root vào path
+project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+if project_root not in sys.path:
+    sys.path.append(project_root)
 sys.path.append('/Workspace/Users/vphat545@gmail.com/stock-gnn-mlops')
 
 from data_engineering.ingestion_databricks import ingest_data

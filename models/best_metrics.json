@@ -1,12 +1,12 @@
 {
   "metrics": {
-    "accuracy": 0.6210413080895009,
-    "f1_score": 0.22415539796502665,
-    "auc_roc": 0.6082368430423272
+    "accuracy": 0.4559386973180077,
+    "f1_score": 0.4701492537313433,
+    "auc_roc": 0.47382370458606315
   },
   "model_info": {
-    "run_id": "0988582cd14b409299acabf28352eb9d",
-    "experiment_id": "117294656100658",
+    "run_id": "62226e571dd543b5bacee3536f9308f7",
+    "experiment_id": "206488541088850825",
     "params": {
       "objective": "binary:logistic",
       "max_depth": 5,
@@ -14,5 +14,5 @@
       "n_estimators": 100
     }
   },
-  "saved_at": "2026-05-29T17:07:43.603056"
+  "saved_at": "2026-06-02T18:49:44.281798"
 }

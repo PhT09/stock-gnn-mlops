@@ -16,8 +16,26 @@ def generate_report(model, df, metrics, data_metadata=None):
     # 1. Trích xuất Feature Importances từ XGBoost
     importances = model.feature_importances_
     
-    # Gán tên giả định cho 9 features
-    feature_names = ["MA5", "MA10", "MA20", "RSI", "MACD", "MACD_Signal", "Log_Return", "Volatility", "Price_Scaled"]
+    # Gán tên cho 16 features
+    feature_names = [
+        "return_1d",
+        "return_3d",
+        "return_5d",
+        "return_10d",
+        "price_vs_ma5",
+        "price_vs_ma10",
+        "ma5_vs_ma10",
+        "volume_ratio",
+        "volume_change",
+        "volatility_5",
+        "volatility_10",
+        "oc_return",
+        "hl_range",
+        "close_position",
+        "return_lag1",
+        "return_lag2",
+        "return_lag3"
+    ]
     
     # Lấy top 3 features quan trọng nhất
     top_indices = np.argsort(importances)[::-1][:3]
@@ -91,11 +109,17 @@ def generate_report(model, df, metrics, data_metadata=None):
     
     # ===== VẼ BIỂU ĐỒ (GIỮ NGUYÊN) =====
     # 9. Trực quan hóa (Vẽ biểu đồ 30 ngày gần nhất)
-    X_all = np.vstack(df['scaled_features'].apply(lambda x: x['values']).values)
-    recent_prices = X_all[-30:, 8] 
+    if 'close' in df.columns:
+        recent_prices = df['close'].values[-30:]
+        label_text = 'Price Trend'
+    else:
+        # Fallback to first feature
+        X_all = np.vstack(df['scaled_features'].apply(lambda x: x['values']).values)
+        recent_prices = X_all[-30:, 0]
+        label_text = 'Feature 1 (Scaled)'
     
     plt.figure(figsize=(10, 5))
-    plt.plot(recent_prices, marker='o', linestyle='-', color='blue', label='Price Trend (Scaled)')
+    plt.plot(recent_prices, marker='o', linestyle='-', color='blue', label=label_text)
     plt.title("Biểu đồ xu hướng 30 ngày gần nhất")
     plt.xlabel("Ngày (gần nhất ở bên phải)")
     plt.ylabel("Chỉ số Giá (Đã chuẩn hóa)")
@@ -107,12 +131,10 @@ def generate_report(model, df, metrics, data_metadata=None):
     plt.close()
     
     # ===== TẠO EMAIL MỚI =====
-    # 10. Auto-fetch metadata from RAW data
-    from pyspark.sql import SparkSession
-    from datetime import datetime
-    
     data_info = ""
     try:
+        from pyspark.sql import SparkSession
+        from datetime import datetime
         spark = SparkSession.builder.appName("GetMetadata").getOrCreate()
         raw_df = spark.read.parquet("/Volumes/workspace/default/stock_data/raw/stock_data.parquet")
         
@@ -206,6 +228,13 @@ def generate_report(model, df, metrics, data_metadata=None):
     # 13. Gửi Email (Nếu có cấu hình trong .env)
     # Load .env file to read email config
     env_path = "/Workspace/Users/vphat545@gmail.com/stock-gnn-mlops/.env"
+    if not os.path.exists(env_path):
+        project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        local_env = os.path.join(project_root, ".env")
+        if os.path.exists(local_env):
+            env_path = local_env
+        else:
+            env_path = ".env"
     load_dotenv(env_path)
     sender_email = os.getenv("SENDER_EMAIL")
     sender_password = os.getenv("SENDER_PASSWORD")

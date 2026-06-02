@@ -8,10 +8,11 @@ import os
 import json
 import shutil
 
-MODEL_DIR = "/Workspace/Users/vphat545@gmail.com/stock-gnn-mlops/models"
+MODEL_DIR = "/Workspace/Users/vphat545@gmail.com/stock-gnn-mlops/models" if "DATABRICKS_RUNTIME_VERSION" in os.environ else "models"
 BEST_MODEL_PATH = os.path.join(MODEL_DIR, "best_model.json")
 PREV_BEST_MODEL_PATH = os.path.join(MODEL_DIR, "prev_best_model.json")
 METRICS_PATH = os.path.join(MODEL_DIR, "best_metrics.json")
+
 
 def load_best_metrics():
     """Load metrics của best model hiện tại"""
@@ -89,13 +90,23 @@ def compare_models(new_metrics, old_metrics):
         return False
 
 def train(data_path="/Volumes/workspace/default/stock_data/processed/stock_features.parquet"):
-    print("Loading feature table from Databricks...")
+    # Fallback to local downloaded_data if Databricks volume path does not exist
+    if not os.path.exists(data_path):
+        local_path = "downloaded_data"
+        if os.path.exists(local_path):
+            print(f"⚠️ Databricks volume path '{data_path}' not found. Falling back to local: '{local_path}'")
+            data_path = local_path
+            
+    print(f"Loading feature table from: {data_path}")
     df = pd.read_parquet(data_path)
+    
+    # Drop rows with null targets for training (e.g. the latest day's data)
+    df_train = df.dropna(subset=['target']).copy()
     
     # Trích xuất mảng values từ Spark ML DenseVector dictionary
     import numpy as np
-    X = np.vstack(df['scaled_features'].apply(lambda x: x['values']).values)
-    y = df['target']
+    X = np.vstack(df_train['scaled_features'].apply(lambda x: x['values']).values)
+    y = df_train['target']
     
     # Time-based split (e.g., last 20% is test)
     split_idx = int(len(df) * 0.8)

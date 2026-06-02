@@ -1,5 +1,6 @@
 {
   "metrics": {
+<<<<<<< Updated upstream
     "accuracy": 0.4559386973180077,
     "f1_score": 0.4701492537313433,
     "auc_roc": 0.47382370458606315
@@ -7,6 +8,15 @@
   "model_info": {
     "run_id": "62226e571dd543b5bacee3536f9308f7",
     "experiment_id": "206488541088850825",
+=======
+    "accuracy": 0.6204003660336778,
+    "f1_score": 0.32635159963491106,
+    "auc_roc": 0.6284088367469922
+  },
+  "model_info": {
+    "run_id": "f8543df0606f4e9c8846e689626e6184",
+    "experiment_id": "117294656100658",
+>>>>>>> Stashed changes
     "params": {
       "objective": "binary:logistic",
       "max_depth": 5,
@@ -14,5 +24,9 @@
       "n_estimators": 100
     }
   },
+<<<<<<< Updated upstream
   "saved_at": "2026-06-02T18:49:44.281798"
+=======
+  "saved_at": "2026-06-02T06:37:12.486470"
+>>>>>>> Stashed changes
 }

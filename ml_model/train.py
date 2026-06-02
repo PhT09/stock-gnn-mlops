@@ -100,6 +100,7 @@ def train(data_path="/Volumes/workspace/default/stock_data/processed/stock_featu
     print(f"Loading feature table from: {data_path}")
     df = pd.read_parquet(data_path)
     
+<<<<<<< Updated upstream
     # Drop rows with null targets for training (e.g. the latest day's data)
     df_train = df.dropna(subset=['target']).copy()
     
@@ -107,6 +108,20 @@ def train(data_path="/Volumes/workspace/default/stock_data/processed/stock_featu
     import numpy as np
     X = np.vstack(df_train['scaled_features'].apply(lambda x: x['values']).values)
     y = df_train['target']
+=======
+    # Trích xuất features - Support both old and new formats
+    import numpy as np
+    
+    # Check format of scaled_features
+    sample = df['scaled_features'].iloc[0]
+    if isinstance(sample, dict):
+        # Old format: Spark DenseVector dictionary {'values': [...]}
+        X = np.vstack(df['scaled_features'].apply(lambda x: x['values']).values)
+    else:
+        # New format: numpy array directly
+        X = np.vstack(df['scaled_features'].values)
+    y = df['target']
+>>>>>>> Stashed changes
     
     # Time-based split (e.g., last 20% is test)
     split_idx = int(len(df) * 0.8)

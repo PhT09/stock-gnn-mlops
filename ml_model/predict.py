@@ -1,7 +1,11 @@
-import mlflow.xgboost
 import pandas as pd
+import numpy as np
+import xgboost as xgb
+from datetime import datetime, timedelta
+from pyspark.sql import SparkSession
 import os
 
+<<<<<<< Updated upstream
 class StockPredictor:
     def __init__(self, model_name="workspace.default.stock_predictor", alias="production"):
         """
@@ -66,18 +70,176 @@ class StockPredictor:
         """
         aligned_features = self._align_features(features)
         return self.model.predict(aligned_features)
+=======
+MODEL_PATH = "/Workspace/Users/vphat545@gmail.com/stock-gnn-mlops/models/best_model.json"
+PROCESSED_PATH = "/Volumes/workspace/default/stock_data/processed/stock_features.parquet"
+PREDICTIONS_PATH = "/Volumes/workspace/default/stock_data/predictions/"
+
+def get_next_trading_date():
+    """Tính ngày giao dịch tiếp theo (bỏ qua weekend)"""
+    today = datetime.now()
+    next_date = today + timedelta(days=1)
+>>>>>>> Stashed changes
     
-    def predict_proba(self, features: pd.DataFrame):
+    # Skip weekend
+    while next_date.weekday() >= 5:  # 5=Saturday, 6=Sunday
+        next_date += timedelta(days=1)
+    
+    return next_date.strftime('%Y-%m-%d')
+
+def predict_next_session():
+    """
+    Dự đoán TẤT CẢ các mã cho phiên giao dịch tiếp theo
+    
+    Returns:
+        predictions_df: DataFrame với columns:
+            - prediction_date: Ngày đưa ra dự đoán (hôm nay)
+            - ticker: Mã cổ phiếu
+            - predicted_for_date: Ngày giao dịch được dự đoán (ngày mai/thứ 2)
+            - prediction: 0 (giảm) hoặc 1 (tăng)
+            - probability: Xác suất dự đoán (0-1)
+            - confidence: HIGH/MEDIUM/LOW dựa vào probability
+    """
+    
+    print("="*80)
+    print("🔮 STOCK PREDICTION - DỰ ĐOÁN PHIÊN TIẾP THEO")
+    print("="*80)
+    
+    # 1. Load best model
+    print(f"\n📦 Loading best model from: {MODEL_PATH}")
+    if not os.path.exists(MODEL_PATH):
+        raise FileNotFoundError(f"Model not found: {MODEL_PATH}. Please train model first!")
+    
+    model = xgb.XGBClassifier()
+    model.load_model(MODEL_PATH)
+    print("✅ Model loaded successfully")
+    
+    # 2. Load processed data (latest data)
+    print(f"\n📂 Loading processed data from: {PROCESSED_PATH}")
+    df = pd.read_parquet(PROCESSED_PATH)
+    print(f"   Total rows: {len(df):,}")
+    print(f"   Tickers: {df['ticker'].nunique()}")
+    
+    # 3. Get latest data for each ticker (most recent date)
+    print("\n🔍 Getting latest data for each ticker...")
+    df['date'] = pd.to_datetime(df['date'])
+    latest_df = df.sort_values('date').groupby('ticker').tail(1).reset_index(drop=True)
+    
+    latest_date = latest_df['date'].max()
+    print(f"   Latest data date: {latest_date.strftime('%Y-%m-%d')}")
+    print(f"   Tickers with latest data: {len(latest_df)}")
+    
+    # 4. Extract features
+    print("\n🔧 Extracting features for prediction...")
+    sample = latest_df['scaled_features'].iloc[0]
+    if isinstance(sample, dict):
+        # Old format
+        X = np.vstack(latest_df['scaled_features'].apply(lambda x: x['values']).values)
+    else:
+        # New format
+        X = np.vstack(latest_df['scaled_features'].values)
+    
+    # 5. Make predictions
+    print("\n🤖 Making predictions for all tickers...")
+    predictions = model.predict(X)
+    probabilities = model.predict_proba(X)[:, 1]  # Probability of class 1 (tăng)
+    
+    # 6. Calculate confidence levels
+    def get_confidence(prob):
         """
-        Predict probabilities
-        
-        Returns:
-            probabilities: [prob_down, prob_up]
+        Confidence level dựa vào probability:
+        - HIGH: prob >= 0.7 or prob <= 0.3 (very confident)
+        - MEDIUM: 0.3 < prob < 0.7 and (prob > 0.6 or prob < 0.4)
+        - LOW: 0.4 <= prob <= 0.6 (uncertain)
         """
+<<<<<<< Updated upstream
         aligned_features = self._align_features(features)
         return self.model.predict_proba(aligned_features)
         
+=======
+        if prob >= 0.7 or prob <= 0.3:
+            return "HIGH"
+        elif prob > 0.6 or prob < 0.4:
+            return "MEDIUM"
+        else:
+            return "LOW"
+    
+    confidences = [get_confidence(p) for p in probabilities]
+    
+    # 7. Create predictions dataframe
+    prediction_date = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+    predicted_for_date = get_next_trading_date()
+    
+    predictions_df = pd.DataFrame({
+        'prediction_date': prediction_date,
+        'ticker': latest_df['ticker'].values,
+        'predicted_for_date': predicted_for_date,
+        'prediction': predictions,
+        'probability': probabilities,
+        'confidence': confidences,
+        'latest_data_date': latest_df['date'].dt.strftime('%Y-%m-%d').values
+    })
+    
+    # 8. Add signal labels
+    predictions_df['signal'] = predictions_df['prediction'].map({
+        0: '📉 GIẢM',
+        1: '📈 TĂNG'
+    })
+    
+    # 9. Summary statistics
+    print("\n📊 PREDICTION SUMMARY:")
+    print("-" * 80)
+    print(f"   Prediction date: {prediction_date}")
+    print(f"   Predicted for date: {predicted_for_date} (phiên giao dịch tiếp theo)")
+    print(f"   Total tickers: {len(predictions_df)}")
+    print(f"\n   Signals:")
+    print(f"      📈 TĂNG: {(predictions == 1).sum()} tickers ({(predictions == 1).sum()/len(predictions)*100:.1f}%)")
+    print(f"      📉 GIẢM: {(predictions == 0).sum()} tickers ({(predictions == 0).sum()/len(predictions)*100:.1f}%)")
+    print(f"\n   Confidence levels:")
+    for conf in ['HIGH', 'MEDIUM', 'LOW']:
+        count = (predictions_df['confidence'] == conf).sum()
+        pct = count / len(predictions_df) * 100
+        print(f"      {conf}: {count} tickers ({pct:.1f}%)")
+    
+    # 10. Top predictions
+    print("\n🎯 TOP 10 DỰ ĐOÁN TĂNG MẠNH (High Confidence):")
+    top_up = predictions_df[predictions_df['prediction'] == 1].sort_values('probability', ascending=False).head(10)
+    for _, row in top_up.iterrows():
+        print(f"   {row['ticker']:<8} 📈 {row['probability']:.1%} ({row['confidence']})")
+    
+    print("\n🎯 TOP 10 DỰ ĐOÁN GIẢM MẠNH (High Confidence):")
+    top_down = predictions_df[predictions_df['prediction'] == 0].sort_values('probability').head(10)
+    for _, row in top_down.iterrows():
+        print(f"   {row['ticker']:<8} 📉 {1-row['probability']:.1%} ({row['confidence']})")
+    
+    # 11. Save to Unity Catalog
+    print(f"\n💾 Saving predictions to: {PREDICTIONS_PATH}")
+    spark = SparkSession.builder.appName("StockPredictions").getOrCreate()
+    
+    # Convert to Spark DataFrame
+    spark_df = spark.createDataFrame(predictions_df)
+    
+    # Save as parquet (overwrite mode - mỗi lần chạy là predictions mới)
+    spark_df.write.mode("overwrite").parquet(PREDICTIONS_PATH + "latest.parquet")
+    
+    # Also append to history table (keep all predictions history)
+    try:
+        spark_df.write.mode("append").parquet(PREDICTIONS_PATH + "history.parquet")
+        print("   ✅ Saved to history table")
+    except:
+        # First time - create table
+        spark_df.write.mode("overwrite").parquet(PREDICTIONS_PATH + "history.parquet")
+        print("   ✅ Created history table")
+    
+    print("\n✅ PREDICTIONS COMPLETED!")
+    print("="*80)
+    print(f"\n📍 Query predictions:")
+    print(f"   Latest: spark.read.parquet('{PREDICTIONS_PATH}latest.parquet')")
+    print(f"   History: spark.read.parquet('{PREDICTIONS_PATH}history.parquet')")
+    
+    return predictions_df
+
+>>>>>>> Stashed changes
 if __name__ == "__main__":
-    # Test
-    predictor = StockPredictor()
-    print(f"Model loaded: {predictor.model is not None}")
+    predictions = predict_next_session()
+    print(f"\n✅ Generated {len(predictions)} predictions")

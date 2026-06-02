@@ -8,14 +8,18 @@ from email.mime.text import MIMEText
 from email.mime.image import MIMEImage
 from email.mime.base import MIMEBase
 from email import encoders
-from dotenv import load_dotenv
+import sys
+sys.path.append('/Workspace/Users/vphat545@gmail.com/stock-gnn-mlops')
 
-def generate_report(model, df, metrics, data_metadata=None):
+from ml_model.predict_multi_day import predict_multi_day
+
+def generate_report(model, df, metrics, predictions_df=None):
     print("Đang tạo báo cáo Insight & Visualization...")
     
     # 1. Trích xuất Feature Importances từ XGBoost
     importances = model.feature_importances_
     
+<<<<<<< Updated upstream
     # Gán tên cho 16 features
     feature_names = [
         "return_1d",
@@ -35,78 +39,90 @@ def generate_report(model, df, metrics, data_metadata=None):
         "return_lag1",
         "return_lag2",
         "return_lag3"
+=======
+    # Gán tên cho 17 features mới (theo code tham chiếu)
+    feature_names = [
+        "return_1d", "return_3d", "return_5d", "return_10d",
+        "price_vs_ma5", "price_vs_ma10", "ma5_vs_ma10",
+        "volume_ratio", "volume_change",
+        "volatility_5", "volatility_10",
+        "oc_return", "hl_range", "close_position",
+        "return_lag1", "return_lag2", "return_lag3"
+>>>>>>> Stashed changes
     ]
     
     # Lấy top 3 features quan trọng nhất
     top_indices = np.argsort(importances)[::-1][:3]
     top_features = [(feature_names[i], importances[i]) for i in top_indices]
     
-    # ===== PHẦN MỚI: PREDICT TẤT CẢ CÁC MÃ Ở NGÀY MỚI NHẤT =====
-    print("\n📊 Phân tích tất cả các mã cổ phiếu...")
+    # ===== PHẦN MỚI: DỰ ĐOÁN 15 NGÀY =====
+    print("\n🔮 Đang dự đoán 15 ngày tiếp theo...")
     
-    # 2. Lấy ngày mới nhất và tất cả các mã ở ngày đó
-    latest_date = df['date'].max()
-    df_latest = df[df['date'] == latest_date].copy()
+    try:
+        # Use predictions_df if provided, otherwise generate new
+        if predictions_df is None:
+            predictions_df = predict_multi_day(n_days=15)
+        
+        print(f"✅ Có predictions cho {len(predictions_df)} mã × 15 ngày")
+        
+        # Extract day 1 data for summary
+        day1_predictions = predictions_df['day_1_prediction'].values
+        day1_date = predictions_df['day_1_date'].iloc[0]
+        
+        up_count = np.sum(day1_predictions == 1)
+        down_count = np.sum(day1_predictions == 0)
+        total = len(day1_predictions)
+        up_pct = (up_count / total) * 100
+        down_pct = 100 - up_pct
+        
+        # Market sentiment
+        if up_pct > 60:
+            market_sentiment = "XU HƯỚNG TĂNG 📈"
+            sentiment_emoji = "📈"
+        elif up_pct < 40:
+            market_sentiment = "XU HƯỚNG GIẢM 📉"
+            sentiment_emoji = "📉"
+        else:
+            market_sentiment = "SIDEWAY ↔️"
+            sentiment_emoji = "↔️"
+        
+        print(f"\n   📊 Ngày 1 ({day1_date}):")
+        print(f"      • {up_count}/{total} mã TĂNG ({up_pct:.1f}%)")
+        print(f"      • Thị trường: {market_sentiment}")
+        
+        # Top stocks day 1
+        top_up = predictions_df[predictions_df['day_1_prediction'] == 1].nlargest(5, 'day_1_probability')[
+            ['ticker', 'day_1_probability', 'day_1_confidence']
+        ]
+        
+        top_down = predictions_df[predictions_df['day_1_prediction'] == 0].nsmallest(5, 'day_1_probability')[
+            ['ticker', 'day_1_probability', 'day_1_confidence']
+        ]
+        
+        if len(top_up) > 0:
+            print(f"\n   🔥 Top 5 mã TĂNG ngày 1:")
+            for idx, row in top_up.iterrows():
+                print(f"      {row['ticker']}: {row['day_1_probability']*100:.1f}% ({row['day_1_confidence']})")
+        
+    except Exception as e:
+        print(f"\n⚠️  Lỗi khi generate predictions: {e}")
+        import traceback
+        traceback.print_exc()
+        # Fallback to empty predictions
+        predictions_df = pd.DataFrame()
+        up_count = down_count = total = 0
+        up_pct = down_pct = 0
+        market_sentiment = "KHÔNG XÁC ĐỊNH"
+        sentiment_emoji = "❓"
+        day1_date = "N/A"
+        top_up = pd.DataFrame()
+        top_down = pd.DataFrame()
     
-    print(f"   • Ngày phân tích: {latest_date}")
-    print(f"   • Số lượng mã: {len(df_latest)}")
-    
-    # 3. Extract features và predict TẤT CẢ
-    X_latest = np.vstack(df_latest['scaled_features'].apply(lambda x: x['values']).values)
-    predictions = model.predict(X_latest)
-    proba = model.predict_proba(X_latest)[:, 1]  # Confidence cho class 1 (TĂNG)
-    
-    # 4. Thêm predictions vào dataframe
-    df_latest['prediction'] = predictions
-    df_latest['confidence'] = proba
-    df_latest['signal'] = df_latest['prediction'].apply(lambda x: 'TĂNG 📈' if x == 1 else 'GIẢM 📉')
-    
-    # 5. Tính statistics
-    up_count = sum(predictions == 1)
-    down_count = sum(predictions == 0)
-    total = len(predictions)
-    up_pct = (up_count / total) * 100
-    down_pct = 100 - up_pct
-    
-    # 6. Xác định sentiment thị trường
-    if up_pct > 60:
-        market_sentiment = "XU HƯỚNG TĂNG 📈"
-        sentiment_emoji = "📈"
-    elif up_pct < 40:
-        market_sentiment = "XU HƯỚNG GIẢM 📉"
-        sentiment_emoji = "📉"
-    else:
-        market_sentiment = "SIDEWAY ↔️"
-        sentiment_emoji = "↔️"
-    
-    print(f"\n   📊 Kết quả phân tích:")
-    print(f"      • {up_count}/{total} mã TĂNG ({up_pct:.1f}%)")
-    print(f"      • {down_count}/{total} mã GIẢM ({down_pct:.1f}%)")
-    print(f"      • Thị trường: {market_sentiment}")
-    
-    # 7. Top stocks
-    if up_count > 0:
-        top_up = df_latest[df_latest['prediction'] == 1].nlargest(5, 'confidence')[['ticker', 'confidence']]
-        print(f"\n   🔥 Top 5 mã TĂNG:")
-        for idx, row in top_up.iterrows():
-            print(f"      {row['ticker']}: {row['confidence']*100:.1f}%")
-    else:
-        top_up = pd.DataFrame(columns=['ticker', 'confidence'])
-    
-    if down_count > 0:
-        top_down = df_latest[df_latest['prediction'] == 0].nlargest(5, 'confidence')[['ticker', 'confidence']]
-        print(f"\n   📉 Top 5 mã GIẢM:")
-        for idx, row in top_down.iterrows():
-            print(f"      {row['ticker']}: {row['confidence']*100:.1f}%")
-    else:
-        top_down = pd.DataFrame(columns=['ticker', 'confidence'])
-    
-    # 8. Save predictions to CSV
-    csv_path = "data/predictions.csv"
+    # ===== SAVE CSV 15 NGÀY =====
+    csv_path = "data/predictions_15_days.csv"
     os.makedirs("data", exist_ok=True)
-    df_latest[['ticker', 'signal', 'confidence']].sort_values('confidence', ascending=False).to_csv(csv_path, index=False)
-    print(f"\n   💾 Đã lưu predictions: {csv_path}")
     
+<<<<<<< Updated upstream
     # ===== VẼ BIỂU ĐỒ (GIỮ NGUYÊN) =====
     # 9. Trực quan hóa (Vẽ biểu đồ 30 ngày gần nhất)
     if 'close' in df.columns:
@@ -117,6 +133,44 @@ def generate_report(model, df, metrics, data_metadata=None):
         X_all = np.vstack(df['scaled_features'].apply(lambda x: x['values']).values)
         recent_prices = X_all[-30:, 0]
         label_text = 'Feature 1 (Scaled)'
+=======
+    if len(predictions_df) > 0:
+        # Format CSV for easy reading
+        csv_data = []
+        
+        for _, row in predictions_df.iterrows():
+            ticker = row['ticker']
+            latest_data = row['latest_data_date']
+            
+            # Create row with day-by-day predictions
+            csv_row = {
+                'Ticker': ticker,
+                'Latest_Data': latest_data
+            }
+            
+            for day in range(1, 16):
+                date_col = f'day_{day}_date'
+                signal_col = f'day_{day}_signal'
+                prob_col = f'day_{day}_probability'
+                conf_col = f'day_{day}_confidence'
+                
+                csv_row[f'Day{day}_Date'] = row[date_col]
+                csv_row[f'Day{day}_Signal'] = row[signal_col]
+                csv_row[f'Day{day}_Confidence'] = f"{row[prob_col]*100:.1f}%"
+                csv_row[f'Day{day}_Level'] = row[conf_col]
+            
+            csv_data.append(csv_row)
+        
+        csv_df = pd.DataFrame(csv_data)
+        csv_df.to_csv(csv_path, index=False, encoding='utf-8-sig')
+        print(f"\n   💾 Đã lưu CSV: {csv_path}")
+        print(f"      • {len(csv_df)} tickers")
+        print(f"      • 15 ngày predictions cho mỗi mã")
+    
+    # ===== VẼ BIỂU ĐỒ =====
+    X_all = np.vstack(df['scaled_features'].apply(lambda x: x['values'] if isinstance(x, dict) else x).values)
+    recent_prices = X_all[-30:, 8] 
+>>>>>>> Stashed changes
     
     plt.figure(figsize=(10, 5))
     plt.plot(recent_prices, marker='o', linestyle='-', color='blue', label=label_text)
@@ -130,7 +184,14 @@ def generate_report(model, df, metrics, data_metadata=None):
     plt.savefig(image_path)
     plt.close()
     
+<<<<<<< Updated upstream
     # ===== TẠO EMAIL MỚI =====
+=======
+    # ===== METADATA =====
+    from pyspark.sql import SparkSession
+    from datetime import datetime
+    
+>>>>>>> Stashed changes
     data_info = ""
     try:
         from pyspark.sql import SparkSession
@@ -138,15 +199,12 @@ def generate_report(model, df, metrics, data_metadata=None):
         spark = SparkSession.builder.appName("GetMetadata").getOrCreate()
         raw_df = spark.read.parquet("/Volumes/workspace/default/stock_data/raw/stock_data.parquet")
         
-        # Get metadata
         latest_date_val = raw_df.selectExpr("max(date) as max_date").collect()[0][0]
         total_rows = raw_df.count()
         
-        # Calculate days old
         latest_date_str = latest_date_val.strftime('%Y-%m-%d')
         days_old = (datetime.now() - latest_date_val).days
         
-        # Determine freshness
         if days_old == 0:
             data_freshness = "🟢 MỚI NHẤT (hôm nay)"
         elif days_old == 1:
@@ -161,26 +219,63 @@ def generate_report(model, df, metrics, data_metadata=None):
         print(f"   ⚠️  Could not fetch metadata: {e}")
         data_info = "<br><b>📅 Dữ liệu:</b> Không xác định<br>"
     
-    # 11. Build HTML content
-    # Top UP table
+    # ===== BUILD EMAIL HTML =====
+    # Top UP table (Day 1)
     top_up_html = ""
     if len(top_up) > 0:
-        top_up_html = "<h3>🔥 TOP 5 MÃ CÓ KHẢ NĂNG TĂNG CAO:</h3>"
-        top_up_html += '<table border="1" style="border-collapse: collapse; width: 60%;">'
-        top_up_html += '<tr style="background-color: #d4edda;"><th style="padding: 8px;">Mã</th><th style="padding: 8px;">Confidence</th></tr>'
+        top_up_html = "<h3>🔥 TOP 5 MÃ CÓ KHẢ NĂNG TĂNG CAO (NGÀY 1):</h3>"
+        top_up_html += '<table border="1" style="border-collapse: collapse; width: 70%;">'
+        top_up_html += '<tr style="background-color: #d4edda;"><th style="padding: 8px;">Mã</th><th style="padding: 8px;">Confidence</th><th style="padding: 8px;">Level</th></tr>'
         for idx, row in top_up.iterrows():
-            top_up_html += f'<tr><td style="padding: 8px; text-align: center;"><b>{row["ticker"]}</b></td><td style="padding: 8px; text-align: center;">{row["confidence"]*100:.1f}%</td></tr>'
+            top_up_html += f'<tr><td style="padding: 8px; text-align: center;"><b>{row["ticker"]}</b></td>'
+            top_up_html += f'<td style="padding: 8px; text-align: center;">{row["day_1_probability"]*100:.1f}%</td>'
+            top_up_html += f'<td style="padding: 8px; text-align: center;">{row["day_1_confidence"]}</td></tr>'
         top_up_html += '</table><br>'
     
-    # Top DOWN table
+    # Top DOWN table (Day 1)
     top_down_html = ""
     if len(top_down) > 0:
-        top_down_html = "<h3>📉 TOP 5 MÃ CẦN THẬN TRỌNG (DỰ ĐOÁN GIẢM):</h3>"
-        top_down_html += '<table border="1" style="border-collapse: collapse; width: 60%;">'
-        top_down_html += '<tr style="background-color: #f8d7da;"><th style="padding: 8px;">Mã</th><th style="padding: 8px;">Confidence</th></tr>'
+        top_down_html = "<h3>📉 TOP 5 MÃ CẦN THẬN TRỌNG (NGÀY 1):</h3>"
+        top_down_html += '<table border="1" style="border-collapse: collapse; width: 70%;">'
+        top_down_html += '<tr style="background-color: #f8d7da;"><th style="padding: 8px;">Mã</th><th style="padding: 8px;">Confidence</th><th style="padding: 8px;">Level</th></tr>'
         for idx, row in top_down.iterrows():
-            top_down_html += f'<tr><td style="padding: 8px; text-align: center;"><b>{row["ticker"]}</b></td><td style="padding: 8px; text-align: center;">{row["confidence"]*100:.1f}%</td></tr>'
+            top_down_html += f'<tr><td style="padding: 8px; text-align: center;"><b>{row["ticker"]}</b></td>'
+            top_down_html += f'<td style="padding: 8px; text-align: center;">{row["day_1_probability"]*100:.1f}%</td>'
+            top_down_html += f'<td style="padding: 8px; text-align: center;">{row["day_1_confidence"]}</td></tr>'
         top_down_html += '</table><br>'
+    
+    # Week overview (Days 1-5)
+    week_html = ""
+    if len(predictions_df) > 0:
+        week_html = "<h3>📅 DỰ ĐOÁN TUẦN NÀY (5 NGÀY ĐẦU):</h3>"
+        week_html += '<table border="1" style="border-collapse: collapse; width: 80%;">'
+        week_html += '<tr style="background-color: #e7f3ff;"><th style="padding: 8px;">Ngày</th><th style="padding: 8px;">📈 TĂNG</th><th style="padding: 8px;">📉 GIẢM</th><th style="padding: 8px;">Xu hướng</th></tr>'
+        
+        for day in range(1, 6):
+            pred_col = f'day_{day}_prediction'
+            date_col = f'day_{day}_date'
+            
+            date_val = predictions_df[date_col].iloc[0]
+            up = np.sum(predictions_df[pred_col] == 1)
+            down = np.sum(predictions_df[pred_col] == 0)
+            up_ratio = up / total * 100
+            
+            if up_ratio > 55:
+                trend = "📈 Tăng"
+                bg = "#d4edda"
+            elif up_ratio < 45:
+                trend = "📉 Giảm"
+                bg = "#f8d7da"
+            else:
+                trend = "↔️ Sideway"
+                bg = "#fff3cd"
+            
+            week_html += f'<tr style="background-color: {bg};"><td style="padding: 8px;"><b>{date_val}</b></td>'
+            week_html += f'<td style="padding: 8px; text-align: center;">{up} ({up_ratio:.0f}%)</td>'
+            week_html += f'<td style="padding: 8px; text-align: center;">{down} ({100-up_ratio:.0f}%)</td>'
+            week_html += f'<td style="padding: 8px; text-align: center;"><b>{trend}</b></td></tr>'
+        
+        week_html += '</table><br>'
     
     # Insights
     insight_html = "<h3>💡 INSIGHTS (Top 3 yếu tố ảnh hưởng):</h3><ul>"
@@ -192,9 +287,9 @@ def generate_report(model, df, metrics, data_metadata=None):
     html_content = f"""
     <html>
       <body style="font-family: Arial, sans-serif;">
-        <h2 style="color: #2c3e50;">📊 BÁO CÁO DỰ ĐOÁN CHỨNG KHOÁN HẰNG NGÀY</h2>
+        <h2 style="color: #2c3e50;">📊 BÁO CÁO DỰ ĐOÁN CHỨNG KHOÁN 15 NGÀY</h2>
         
-        <h3 style="background-color: #f0f0f0; padding: 10px;">📈 TỔNG QUAN THỊ TRƯỜNG NGÀY MAI:</h3>
+        <h3 style="background-color: #f0f0f0; padding: 10px;">📈 TỔNG QUAN NGÀY MAI ({day1_date}):</h3>
         <ul style="font-size: 16px;">
             <li><b style="color: green;">{up_count}/{total} mã</b> dự đoán <b>TĂNG</b> ({up_pct:.1f}%)</li>
             <li><b style="color: red;">{down_count}/{total} mã</b> dự đoán <b>GIẢM</b> ({down_pct:.1f}%)</li>
@@ -205,28 +300,37 @@ def generate_report(model, df, metrics, data_metadata=None):
         
         {top_down_html}
         
+        {week_html}
+        
         {insight_html}
         
         <h3>📊 Chi tiết đầy đủ:</h3>
-        <p>Xem file đính kèm <b>predictions.csv</b> để biết dự đoán cho tất cả {total} mã cổ phiếu.</p>
+        <p><b>🎁 File đính kèm <span style="color: red;">predictions_15_days.csv</span> chứa:</b></p>
+        <ul>
+            <li>✅ <b>TẤT CẢ {total} mã cổ phiếu</b></li>
+            <li>✅ <b>Dự đoán 15 NGÀY giao dịch tiếp theo</b></li>
+            <li>✅ Signal (TĂNG/GIẢM), Confidence (%), Level (HIGH/MEDIUM/LOW)</li>
+        </ul>
+        <p style="background-color: #e7f3ff; padding: 10px; border-left: 4px solid #0066cc;">
+            <b>💡 Cách dùng:</b> Mở file CSV bằng Excel/Google Sheets để xem dự đoán chi tiết cho từng mã trong 15 ngày tới.
+        </p>
         
         {data_info}
         
         <p><b>📊 Đánh giá Model:</b> Accuracy: {metrics['accuracy']:.2f}, F1-Score: {metrics['f1_score']:.2f}, AUC-ROC: {metrics['auc_roc']:.2f}</p>
         
-        <p><i>Biểu đồ xu hướng đính kèm bên dưới.</i></p>
+        <p><i>⚠️  Lưu ý: Độ chính xác giảm dần theo thời gian. Ngày 1 chính xác nhất, ngày 15 chỉ mang tính tham khảo.</i></p>
       </body>
     </html>
     """
     
-    # 12. Ghi ra file HTML
+    # Save HTML
     with open("data/report.html", "w", encoding="utf-8") as f:
         f.write(html_content)
     print(f"   💾 Đã lưu báo cáo: data/report.html")
     
     # ===== GỬI EMAIL =====
-    # 13. Gửi Email (Nếu có cấu hình trong .env)
-    # Load .env file to read email config
+    from dotenv import load_dotenv
     env_path = "/Workspace/Users/vphat545@gmail.com/stock-gnn-mlops/.env"
     if not os.path.exists(env_path):
         if "__file__" not in globals():
@@ -239,6 +343,7 @@ def generate_report(model, df, metrics, data_metadata=None):
         else:
             env_path = ".env"
     load_dotenv(env_path)
+    
     sender_email = os.getenv("SENDER_EMAIL")
     sender_password = os.getenv("SENDER_PASSWORD")
     receiver_email = os.getenv("RECEIVER_EMAIL")
@@ -248,8 +353,8 @@ def generate_report(model, df, metrics, data_metadata=None):
         try:
             msg = MIMEMultipart()
             
-            # Subject mới
-            msg['Subject'] = f"📊 Báo Cáo AI: {up_pct:.0f}% mã TĂNG ({up_count}/{total}) {sentiment_emoji}"
+            # Subject
+            msg['Subject'] = f"📊 Báo Cáo AI 15 Ngày: {up_pct:.0f}% TĂNG ({up_count}/{total}) {sentiment_emoji}"
             msg['From'] = sender_email
             msg['To'] = receiver_email
             
@@ -257,18 +362,20 @@ def generate_report(model, df, metrics, data_metadata=None):
             msg.attach(MIMEText(html_content, 'html'))
             
             # Attach image
-            with open(image_path, 'rb') as f:
-                img_data = f.read()
-                image = MIMEImage(img_data, name="trend.png")
-                msg.attach(image)
+            if os.path.exists(image_path):
+                with open(image_path, 'rb') as f:
+                    img_data = f.read()
+                    image = MIMEImage(img_data, name="trend.png")
+                    msg.attach(image)
             
-            # Attach CSV
-            with open(csv_path, 'rb') as f:
-                csv_attachment = MIMEBase('application', 'octet-stream')
-                csv_attachment.set_payload(f.read())
-                encoders.encode_base64(csv_attachment)
-                csv_attachment.add_header('Content-Disposition', f'attachment; filename="predictions.csv"')
-                msg.attach(csv_attachment)
+            # Attach CSV 15 days
+            if os.path.exists(csv_path):
+                with open(csv_path, 'rb') as f:
+                    csv_attachment = MIMEBase('application', 'octet-stream')
+                    csv_attachment.set_payload(f.read())
+                    encoders.encode_base64(csv_attachment)
+                    csv_attachment.add_header('Content-Disposition', f'attachment; filename="predictions_15_days.csv"')
+                    msg.attach(csv_attachment)
             
             # Send
             with smtplib.SMTP_SSL("smtp.gmail.com", 465) as server:
@@ -277,5 +384,7 @@ def generate_report(model, df, metrics, data_metadata=None):
             print("   ✅ Gửi Email thành công!")
         except Exception as e:
             print(f"   ❌ Lỗi gửi email: {e}")
+            import traceback
+            traceback.print_exc()
     else:
         print("\nℹ️  Bỏ qua gửi Email vì chưa cấu hình SENDER_EMAIL trong file .env.")

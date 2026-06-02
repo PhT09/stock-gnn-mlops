@@ -1,9 +1,12 @@
 import sys
 import os
-project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+if "__file__" not in globals():
+    project_root = "/Workspace/Users/vphat545@gmail.com/stock-gnn-mlops"
+else:
+    project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+
 if project_root not in sys.path:
     sys.path.append(project_root)
-sys.path.append('/Workspace/Users/vphat545@gmail.com/stock-gnn-mlops')
 
 from ml_model.train import train
 from mlops.reporter import generate_report

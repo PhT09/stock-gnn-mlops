@@ -229,7 +229,10 @@ def generate_report(model, df, metrics, data_metadata=None):
     # Load .env file to read email config
     env_path = "/Workspace/Users/vphat545@gmail.com/stock-gnn-mlops/.env"
     if not os.path.exists(env_path):
-        project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        if "__file__" not in globals():
+            project_root = os.getcwd()
+        else:
+            project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
         local_env = os.path.join(project_root, ".env")
         if os.path.exists(local_env):
             env_path = local_env

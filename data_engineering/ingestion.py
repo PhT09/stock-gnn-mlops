@@ -82,6 +82,7 @@ def check_existing_data(spark, raw_path):
             existing_df['date_clean'] = existing_df['date'].astype(str).str.replace(r'\(\d+\)', '', regex=True)
             existing_df['date_parsed'] = pd.to_datetime(existing_df['date_clean'])
             max_date = existing_df['date_parsed'].max().date()
+            existing_df = existing_df.drop(columns=['date_clean', 'date_parsed'])
             
             logger.info(f"Existing data found with {len(existing_df):,} rows. Last date: {max_date}")
             return True, max_date, existing_df
@@ -128,7 +129,8 @@ def fetch_historical_data(ticker, start_date, end_date, prefix=""):
             df_history = df_history.rename(columns={'time': 'date'})
             df_history['ticker'] = ticker
             df_history = df_history[['date', 'ticker', 'open', 'high', 'low', 'close', 'volume']]
-            df_history['date'] = df_history['date'].astype(str)
+            df_history['date'] = pd.to_datetime(df_history['date']).dt.strftime('%Y-%m-%d')
+
             logger.info(f"{p_str} - History: {len(df_history)} rows from {start_date} to {end_date}")
             return df_history
         else:

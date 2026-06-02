@@ -312,12 +312,12 @@ def save_processed_data(df, processed_path, feature_cols):
 # SORTING AND EXPORT FUNCTIONS
 # ============================================================================
 
-def sort_price(spark=None, raw_path=None, output_dir=None):
-    logger.info("[SORTING STOCKS BY PRICE]")
+def export_latest_price_volume(spark=None, raw_path=None, output_dir=None):
+    logger.info("[EXPORTING LATEST PRICE & VOLUME PER TICKER]")
     
     # Initialize Spark if not provided
     if spark is None:
-        spark = initialize_spark("SortStocksByPrice")
+        spark = initialize_spark("ExportLatestPriceVolume")
     
     # Set default paths
     if raw_path is None:
@@ -325,86 +325,26 @@ def sort_price(spark=None, raw_path=None, output_dir=None):
     if output_dir is None:
         output_dir = "/Volumes/workspace/default/stock_data/processed/"
     
-    # Get current date and session
-    today = datetime.now().date().strftime('%Y-%m-%d')
-    current_session = get_current_session()
-    logger.info(f"Current date: {today}")
-    logger.info(f"Current session: {current_session}")
-    
     # Read raw data
     df_raw = spark.read.parquet(raw_path)
     
-    # Filter by today's date and session
-    session_pattern = f"{today}{current_session}"
-    df_today = df_raw.filter(F.col("date") == session_pattern)
-    
-    # Sort by close price descending
-    df_sorted = df_today.select("ticker", "close", "date").orderBy(F.desc("close"))
-    
-    # Collect results
-    sorted_list = df_sorted.collect()
-    
-    logger.info(f"Found {len(sorted_list)} stocks for session {current_session}")
+    # Find latest session per ticker
+    window_spec = Window.partitionBy("ticker").orderBy(F.col("date").desc())
+    df_latest = df_raw.withColumn("rn", F.row_number().over(window_spec)) \
+                     .filter(F.col("rn") == 1) \
+                     .select("ticker", "close", "volume", "date")
     
     # Save to file
-    output_file = output_dir + "stock_desc_price.csv"
-    logger.info(f"Saving sorted stocks to: {output_file}")
+    output_file = output_dir + "ticker_price_volume.csv"
+    logger.info(f"Saving latest price & volume to: {output_file}")
     
-    with open(output_file, 'w', encoding='utf-8') as f:
-        f.write("ticker, close\n")
-        for row in sorted_list:
-            f.write(f"{row['ticker']}, {row['close']:.2f}\n")
+    # Convert to Pandas for CSV export
+    df_pd = df_latest.toPandas()
+    df_pd.to_csv(output_file, index=False, columns=["ticker", "close", "volume"])
     
-    logger.info(f"  Saved {len(sorted_list)} stocks to {output_file}")
+    logger.info(f"  Saved {len(df_pd)} tickers to {output_file}")
     
-    return sorted_list
-
-def sort_volume(spark=None, raw_path=None, output_dir=None):
-    logger.info("[SORTING STOCKS BY VOLUME]")
-    
-    # Initialize Spark if not provided
-    if spark is None:
-        spark = initialize_spark("SortStocksByVolume")
-    
-    # Set default paths
-    if raw_path is None:
-        raw_path = "/Volumes/workspace/default/stock_data/raw/stock_data.parquet"
-    if output_dir is None:
-        output_dir = "/Volumes/workspace/default/stock_data/processed/"
-    
-    # Get current date and session
-    today = datetime.now().date().strftime('%Y-%m-%d')
-    current_session = get_current_session()
-    logger.info(f"Current date: {today}")
-    logger.info(f"Current session: {current_session}")
-    
-    # Read raw data
-    df_raw = spark.read.parquet(raw_path)
-    
-    # Filter by today's date and session
-    session_pattern = f"{today}{current_session}"
-    df_today = df_raw.filter(F.col("date") == session_pattern)
-    
-    # Sort by volume descending
-    df_sorted = df_today.select("ticker", "volume", "date").orderBy(F.desc("volume"))
-    
-    # Collect results
-    sorted_list = df_sorted.collect()
-    
-    logger.info(f"Found {len(sorted_list)} stocks for session {current_session}")
-    
-    # Save to file
-    output_file = output_dir + "stock_desc_volume.csv"
-    logger.info(f"Saving sorted stocks to: {output_file}")
-    
-    with open(output_file, 'w', encoding='utf-8') as f:
-        f.write("ticker, volume\n")
-        for row in sorted_list:
-            f.write(f"{row['ticker']}, {row['volume']:,}\n")
-    
-    logger.info(f"  Saved {len(sorted_list)} stocks to {output_file}")
-    
-    return sorted_list
+    return df_latest
 
 # MAIN PREPROCESSING FUNCTION
 
@@ -444,9 +384,7 @@ def preprocess(run_sorting=True):
     
     # Step 7: Sort by price and volume (if requested)
     if run_sorting:
-        logger.info("\n[RUNNING SORTING OPERATIONS]")
-        sort_price(spark)
-        sort_volume(spark)
+        export_latest_price_volume(spark)
     
     # Summary
     

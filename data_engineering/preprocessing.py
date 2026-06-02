@@ -71,6 +71,47 @@ def read_raw_data(spark, raw_path):
 
 # DATA CLEANING FUNCTIONS
 
+def format_date_column(df):
+    """Format date column to keep session markers but remove time
+    
+    Transforms:
+    - '2026-06-01(2)' -> '2026-06-01(2)' (keep as is)
+    - '2026-06-01 07:00:00' -> '2026-06-01' (remove time, no session marker)
+    
+    Args:
+        df: Input DataFrame
+        
+    Returns:
+        DataFrame: DataFrame with formatted date column
+    """
+    logger.info("Formatting date column (keep session markers, remove time)...")
+    
+    # Extract session marker if exists: (1) or (2)
+    df = df.withColumn("session_marker",
+        F.when(F.col("date").rlike(r"\(1\)"), "(1)")
+         .when(F.col("date").rlike(r"\(2\)"), "(2)")
+         .otherwise(""))
+    
+    # Extract date portion only (YYYY-MM-DD)
+    # Remove anything after the date: space, time, or session marker
+    df = df.withColumn("date_only", 
+        F.regexp_extract(F.col("date"), r"(\d{4}-\d{2}-\d{2})", 1))
+    
+    # Combine date + session marker
+    df = df.withColumn("date",
+        F.concat(F.col("date_only"), F.col("session_marker")))
+    
+    # Drop temporary columns
+    df = df.drop("session_marker", "date_only")
+    
+    # Sample output for verification
+    sample_dates = df.select("date").distinct().limit(5).collect()
+    logger.info("  Sample formatted dates:")
+    for row in sample_dates:
+        logger.info(f"    - {row['date']}")
+    
+    return df
+
 def clean_data(df, initial_count):
     """Clean data by removing nulls and duplicates
     
@@ -82,6 +123,9 @@ def clean_data(df, initial_count):
         DataFrame: Cleaned data
     """
     logger.info("[DATA CLEANING]")
+    
+    # Format date column first
+    df = format_date_column(df)
     
     # Remove null values
     logger.info("Removing null values...")
@@ -135,7 +179,7 @@ def engineer_features(df):
     # Volatility
     logger.info("Calculating volatility (20-day rolling std of returns)...")
     df = df.withColumn("volatility", F.stddev("return").over(window_spec.rowsBetween(-19, 0)))
-    logger.info("  Volatility calculated")
+    logger.info(" Volatility calculated")
     
     return df
 
@@ -152,18 +196,20 @@ def create_target_labels(df):
     logger.info("[TARGET LABEL CREATION]")
     
     logger.info("Creating target labels (1=price up, 0=price down)...")
-    lead_window = Window.partitionBy("ticker").orderBy("date")
-    df = df.withColumn("next_close", F.lead("close", 1).over(lead_window))
-    df = df.withColumn("target", F.when(F.col("next_close") > F.col("close"), 1).otherwise(0))
+    lag_window = Window.partitionBy("ticker").orderBy("date")
+    df = df.withColumn("prev_close", F.lag("close", 1).over(lag_window))
+    df = df.withColumn("target", 
+        F.when(F.col("close") > F.col("prev_close"), 1)
+         .otherwise(0))
     logger.info("  Target labels created")
     
     # Drop rows with nulls (due to lag/lead)
-    logger.info("Removing rows with null values from windowing...")
+    logger.info("Removing first day of each ticker (no previous price)...")
     before_dropna = df.count()
-    df = df.dropna()
-    after_dropna = df.count()
+    df = df.filter(F.col("prev_close").isNotNull())
+    df = df.drop("prev_close")
     after_windowing = df.count()
-    logger.info(f"  - Rows after windowing dropna: {after_windowing:,} (removed {before_dropna - after_dropna:,})")
+    logger.info(f"  Rows after filtering: {after_windowing:,} (removed {before_dropna - after_windowing:,})")
     
     # Check target distribution
     logger.info("Calculating target label distribution...")
@@ -218,40 +264,53 @@ def normalize_features(df, feature_cols):
             df = df.withColumn(f"{col_name}_scaled", F.lit(0.0))
     
     scaled_feature_cols = [f"{col}_scaled" for col in feature_cols]
-    logger.info(f"  {len(scaled_feature_cols)} features normalized")
-    
-    # Assemble scaled features into a single array column for convenience
-    logger.info("Assembling scaled features into array...")
-    df = df.withColumn("scaled_features", F.array(*scaled_feature_cols))
-    logger.info("  Features assembled into array column")
+    logger.info(f"  ✓ {len(scaled_feature_cols)} features normalized")
     
     return df
 
 # DATA SAVING FUNCTIONS
 
-def save_processed_data(df, processed_path):
+def save_processed_data(df, processed_path, feature_cols):
     """Save processed data to parquet file
     
     Args:
         df: DataFrame to save
         processed_path: Base path for processed data
+        feature_cols: List of original feature column names
         
     Returns:
         int: Final row count
     """
     logger.info("[SAVING PROCESSED DATA]")
     
+    # Build list of columns to save
+    columns_to_save = ["date", "ticker"]
+    
+    # Add original feature columns
+    columns_to_save.extend(feature_cols)
+    
+    # Add scaled feature columns
+    scaled_cols = [f"{col}_scaled" for col in feature_cols]
+    columns_to_save.extend(scaled_cols)
+    
+    # Add target column
+    columns_to_save.append("target")
+    
+    logger.info(f"Columns to save: {', '.join(columns_to_save)}")
+    
     # Save processed features
     feature_output_path = processed_path + "stock_features.parquet"
     logger.info(f"Saving processed features to: {feature_output_path}")
-    df.select("date", "ticker", "scaled_features", "target") \
+    df.select(*columns_to_save) \
       .write.mode("overwrite").parquet(feature_output_path)
     final_count = df.count()
     logger.info(f"  Features saved: {final_count:,} rows")
     
     return final_count
 
+# ============================================================================
 # SORTING AND EXPORT FUNCTIONS
+# ============================================================================
 
 def sort_price(spark=None, raw_path=None, output_dir=None):
     logger.info("[SORTING STOCKS BY PRICE]")
@@ -292,7 +351,7 @@ def sort_price(spark=None, raw_path=None, output_dir=None):
     logger.info(f"Saving sorted stocks to: {output_file}")
     
     with open(output_file, 'w', encoding='utf-8') as f:
-        f.write("ticker, close_price\n")
+        f.write("ticker, close\n")
         for row in sorted_list:
             f.write(f"{row['ticker']}, {row['close']:.2f}\n")
     
@@ -371,17 +430,17 @@ def preprocess(run_sorting=True):
     df = clean_data(df, initial_count)
     
     # Step 3: Engineer features
-    df = engineer_features(df)
+    # df = engineer_features(df)
     
     # Step 4: Create target labels
     df, after_windowing = create_target_labels(df)
     
     # Step 5: Normalize features
-    feature_cols = ["open", "high", "low", "close", "volume", "return", "MA_5", "MA_10", "volatility"]
+    feature_cols = ["open", "high", "low", "close", "volume"]
     df = normalize_features(df, feature_cols)
     
     # Step 6: Save processed data
-    final_count = save_processed_data(df, processed_path)
+    final_count = save_processed_data(df, processed_path, feature_cols)
     
     # Step 7: Sort by price and volume (if requested)
     if run_sorting:

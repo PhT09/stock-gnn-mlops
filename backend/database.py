@@ -5,7 +5,7 @@ from databricks import sql
 from dotenv import load_dotenv
 
 env_path = os.path.join(os.path.dirname(__file__), ".env")
-load_dotenv(dotenv_path=env_path)
+load_dotenv(dotenv_path=env_path, override=True)
 
 DATABRICKS_SERVER_HOSTNAME = os.getenv("DATABRICKS_SERVER_HOSTNAME")
 DATABRICKS_HTTP_PATH = os.getenv("DATABRICKS_HTTP_PATH")

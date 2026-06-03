@@ -99,8 +99,19 @@ def run_pipeline():
     # Step 3: Report & Email
     print("\n📧 Step 3: Generate Report & Send Email")
     try:
-        generate_report(model, df, metrics, predictions_df)
-        print("\n✅ Email sent successfully!")
+        from mlops.reporter import send_email
+        
+        # Generate report (returns html, image, csv paths)
+        html_content, image_path, csv_path = generate_report(model, df, metrics, predictions_df)
+        
+        # Actually send the email!
+        subject = f"📊 Stock Predictions Report - {predictions_df['day_1_date'].iloc[0] if predictions_df is not None else 'N/A'}"
+        email_sent = send_email(subject, html_content, image_path, csv_path)
+        
+        if email_sent:
+            print("\n✅ Email sent successfully!")
+        else:
+            print("\n⚠️  Email failed to send (check .env config)")
         
     except Exception as e:
         print(f"\n⚠️  Report generation failed (non-critical): {str(e)}")

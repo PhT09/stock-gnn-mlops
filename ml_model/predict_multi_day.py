@@ -60,6 +60,8 @@ def predict_multi_day(n_days=15):
     # 2. Load latest data
     print(f"\n📂 Loading processed data...")
     df = pd.read_parquet(PROCESSED_PATH)
+    # Handle session markers in date (e.g., "2026-06-02(2)" -> "2026-06-02")
+    df['date'] = df['date'].astype(str).str.replace(r'\(\d+\)$', '', regex=True)
     df['date'] = pd.to_datetime(df['date'])
     
     # Get latest data for each ticker
@@ -69,13 +71,31 @@ def predict_multi_day(n_days=15):
     print(f"   Latest data: {latest_date.strftime('%Y-%m-%d')}")
     print(f"   Tickers: {len(latest_df)}")
     
-    # 3. Extract base features
+    # 3. Extract base features - NEW FORMAT: individual scaled columns
     print(f"\n🔧 Extracting features...")
-    sample = latest_df['scaled_features'].iloc[0]
-    if isinstance(sample, dict):
-        X_base = np.vstack(latest_df['scaled_features'].apply(lambda x: x['values']).values)
-    else:
-        X_base = np.vstack(latest_df['scaled_features'].values)
+    
+    feature_cols = [
+        "return_1d_scaled",
+        "return_3d_scaled",
+        "return_5d_scaled",
+        "return_10d_scaled",
+        "price_vs_ma5_scaled",
+        "price_vs_ma10_scaled",
+        "ma5_vs_ma10_scaled",
+        "volume_ratio_scaled",
+        "volume_change_scaled",
+        "volatility_5_scaled",
+        "volatility_10_scaled",
+        "oc_return_scaled",
+        "hl_range_scaled",
+        "close_position_scaled",
+        "return_lag1_scaled",
+        "return_lag2_scaled",
+        "return_lag3_scaled"
+    ]
+    
+    X_base = latest_df[feature_cols].values
+    print(f"   Feature shape: {X_base.shape}")
     
     # 4. Get trading dates
     trading_dates = get_next_n_trading_dates(n_days)

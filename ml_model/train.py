@@ -100,31 +100,47 @@ def train(data_path="/Volumes/workspace/default/stock_data/processed/stock_featu
     print(f"Loading feature table from: {data_path}")
     df = pd.read_parquet(data_path)
     
-<<<<<<< Updated upstream
     # Drop rows with null targets for training (e.g. the latest day's data)
     df_train = df.dropna(subset=['target']).copy()
     
-    # Trích xuất mảng values từ Spark ML DenseVector dictionary
-    import numpy as np
-    X = np.vstack(df_train['scaled_features'].apply(lambda x: x['values']).values)
-    y = df_train['target']
-=======
-    # Trích xuất features - Support both old and new formats
+    # ============================================================
+    # FEATURE EXTRACTION - Match new preprocessing.py format
+    # ============================================================
+    # New preprocessing.py creates individual *_scaled columns
+    # NOT a single 'scaled_features' vector column
+    
     import numpy as np
     
-    # Check format of scaled_features
-    sample = df['scaled_features'].iloc[0]
-    if isinstance(sample, dict):
-        # Old format: Spark DenseVector dictionary {'values': [...]}
-        X = np.vstack(df['scaled_features'].apply(lambda x: x['values']).values)
-    else:
-        # New format: numpy array directly
-        X = np.vstack(df['scaled_features'].values)
-    y = df['target']
->>>>>>> Stashed changes
+    feature_cols = [
+        "return_1d_scaled",
+        "return_3d_scaled",
+        "return_5d_scaled",
+        "return_10d_scaled",
+        "price_vs_ma5_scaled",
+        "price_vs_ma10_scaled",
+        "ma5_vs_ma10_scaled",
+        "volume_ratio_scaled",
+        "volume_change_scaled",
+        "volatility_5_scaled",
+        "volatility_10_scaled",
+        "oc_return_scaled",
+        "hl_range_scaled",
+        "close_position_scaled",
+        "return_lag1_scaled",
+        "return_lag2_scaled",
+        "return_lag3_scaled"
+    ]
+    
+    # Extract features as numpy array
+    X = df_train[feature_cols].values
+    y = df_train['target']
+    
+    print(f"\n📊 Data shape:")
+    print(f"   - X: {X.shape}")
+    print(f"   - y: {y.shape}")
     
     # Time-based split (e.g., last 20% is test)
-    split_idx = int(len(df) * 0.8)
+    split_idx = int(len(df_train) * 0.8)
     X_train, X_test = X[:split_idx], X[split_idx:]
     y_train, y_test = y.iloc[:split_idx], y.iloc[split_idx:]
     

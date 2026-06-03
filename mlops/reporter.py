@@ -19,28 +19,7 @@ def generate_report(model, df, metrics, predictions_df=None):
     # 1. Trích xuất Feature Importances từ XGBoost
     importances = model.feature_importances_
     
-<<<<<<< Updated upstream
-    # Gán tên cho 16 features
-    feature_names = [
-        "return_1d",
-        "return_3d",
-        "return_5d",
-        "return_10d",
-        "price_vs_ma5",
-        "price_vs_ma10",
-        "ma5_vs_ma10",
-        "volume_ratio",
-        "volume_change",
-        "volatility_5",
-        "volatility_10",
-        "oc_return",
-        "hl_range",
-        "close_position",
-        "return_lag1",
-        "return_lag2",
-        "return_lag3"
-=======
-    # Gán tên cho 17 features mới (theo code tham chiếu)
+    # Gán tên cho 17 features
     feature_names = [
         "return_1d", "return_3d", "return_5d", "return_10d",
         "price_vs_ma5", "price_vs_ma10", "ma5_vs_ma10",
@@ -48,7 +27,6 @@ def generate_report(model, df, metrics, predictions_df=None):
         "volatility_5", "volatility_10",
         "oc_return", "hl_range", "close_position",
         "return_lag1", "return_lag2", "return_lag3"
->>>>>>> Stashed changes
     ]
     
     # Lấy top 3 features quan trọng nhất
@@ -122,18 +100,6 @@ def generate_report(model, df, metrics, predictions_df=None):
     csv_path = "data/predictions_15_days.csv"
     os.makedirs("data", exist_ok=True)
     
-<<<<<<< Updated upstream
-    # ===== VẼ BIỂU ĐỒ (GIỮ NGUYÊN) =====
-    # 9. Trực quan hóa (Vẽ biểu đồ 30 ngày gần nhất)
-    if 'close' in df.columns:
-        recent_prices = df['close'].values[-30:]
-        label_text = 'Price Trend'
-    else:
-        # Fallback to first feature
-        X_all = np.vstack(df['scaled_features'].apply(lambda x: x['values']).values)
-        recent_prices = X_all[-30:, 0]
-        label_text = 'Feature 1 (Scaled)'
-=======
     if len(predictions_df) > 0:
         # Format CSV for easy reading
         csv_data = []
@@ -168,15 +134,29 @@ def generate_report(model, df, metrics, predictions_df=None):
         print(f"      • 15 ngày predictions cho mỗi mã")
     
     # ===== VẼ BIỂU ĐỒ =====
-    X_all = np.vstack(df['scaled_features'].apply(lambda x: x['values'] if isinstance(x, dict) else x).values)
-    recent_prices = X_all[-30:, 8] 
->>>>>>> Stashed changes
+    # NEW: Use individual scaled columns instead of 'scaled_features' vector
+    # Use volume_ratio_scaled as a proxy for recent trend visualization
+    try:
+        if 'volume_ratio_scaled' in df.columns:
+            recent_prices = df['volume_ratio_scaled'].values[-30:]
+            label_text = 'Volume Ratio Trend (Scaled)'
+        elif 'close' in df.columns:
+            recent_prices = df['close'].values[-30:]
+            label_text = 'Price Trend'
+        else:
+            # Fallback: use first scaled feature
+            recent_prices = df['return_1d_scaled'].values[-30:]
+            label_text = 'Return 1D (Scaled)'
+    except Exception as e:
+        print(f"\n⚠️  Could not extract chart data: {e}")
+        recent_prices = np.zeros(30)
+        label_text = 'No Data'
     
     plt.figure(figsize=(10, 5))
     plt.plot(recent_prices, marker='o', linestyle='-', color='blue', label=label_text)
     plt.title("Biểu đồ xu hướng 30 ngày gần nhất")
     plt.xlabel("Ngày (gần nhất ở bên phải)")
-    plt.ylabel("Chỉ số Giá (Đã chuẩn hóa)")
+    plt.ylabel("Chỉ số (Đã chuẩn hóa)")
     plt.legend()
     plt.grid(True)
     
@@ -184,14 +164,7 @@ def generate_report(model, df, metrics, predictions_df=None):
     plt.savefig(image_path)
     plt.close()
     
-<<<<<<< Updated upstream
-    # ===== TẠO EMAIL MỚI =====
-=======
     # ===== METADATA =====
-    from pyspark.sql import SparkSession
-    from datetime import datetime
-    
->>>>>>> Stashed changes
     data_info = ""
     try:
         from pyspark.sql import SparkSession
@@ -319,72 +292,79 @@ def generate_report(model, df, metrics, predictions_df=None):
         
         <p><b>📊 Đánh giá Model:</b> Accuracy: {metrics['accuracy']:.2f}, F1-Score: {metrics['f1_score']:.2f}, AUC-ROC: {metrics['auc_roc']:.2f}</p>
         
-        <p><i>⚠️  Lưu ý: Độ chính xác giảm dần theo thời gian. Ngày 1 chính xác nhất, ngày 15 chỉ mang tính tham khảo.</i></p>
+        <h3>📈 Biểu đồ xu hướng 30 ngày gần nhất:</h3>
+        <p><i>Xem file ảnh đính kèm</i></p>
+        
+        <hr>
+        <p style="color: gray; font-size: 12px;">
+        Báo cáo tự động từ MLOps Pipeline | Databricks | Confidential<br>
+        <b>⚠️ Lưu ý:</b> Đây là dự đoán từ model Machine Learning, không phải lời khuyên đầu tư. Vui lòng tham khảo thêm các nguồn khác.
+        </p>
       </body>
     </html>
     """
     
-    # Save HTML
-    with open("data/report.html", "w", encoding="utf-8") as f:
-        f.write(html_content)
-    print(f"   💾 Đã lưu báo cáo: data/report.html")
-    
-    # ===== GỬI EMAIL =====
+    return html_content, image_path, csv_path
+
+
+def send_email(subject, html_content, image_path, csv_path):
+    """Send email with HTML report, chart image, and CSV attachments"""
     from dotenv import load_dotenv
-    env_path = "/Workspace/Users/vphat545@gmail.com/stock-gnn-mlops/.env"
-    if not os.path.exists(env_path):
-        if "__file__" not in globals():
-            project_root = os.getcwd()
-        else:
-            project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-        local_env = os.path.join(project_root, ".env")
-        if os.path.exists(local_env):
-            env_path = local_env
-        else:
-            env_path = ".env"
-    load_dotenv(env_path)
+    load_dotenv()
     
+    # Email config từ .env
     sender_email = os.getenv("SENDER_EMAIL")
     sender_password = os.getenv("SENDER_PASSWORD")
-    receiver_email = os.getenv("RECEIVER_EMAIL")
+    receiver_emails_str = os.getenv("RECEIVER_EMAILS", "")
     
-    if sender_email and sender_password and receiver_email:
-        print("\n📧 Đang gửi Email báo cáo...")
-        try:
-            msg = MIMEMultipart()
-            
-            # Subject
-            msg['Subject'] = f"📊 Báo Cáo AI 15 Ngày: {up_pct:.0f}% TĂNG ({up_count}/{total}) {sentiment_emoji}"
-            msg['From'] = sender_email
-            msg['To'] = receiver_email
-            
-            # Attach HTML
-            msg.attach(MIMEText(html_content, 'html'))
-            
-            # Attach image
-            if os.path.exists(image_path):
-                with open(image_path, 'rb') as f:
-                    img_data = f.read()
-                    image = MIMEImage(img_data, name="trend.png")
-                    msg.attach(image)
-            
-            # Attach CSV 15 days
-            if os.path.exists(csv_path):
-                with open(csv_path, 'rb') as f:
-                    csv_attachment = MIMEBase('application', 'octet-stream')
-                    csv_attachment.set_payload(f.read())
-                    encoders.encode_base64(csv_attachment)
-                    csv_attachment.add_header('Content-Disposition', f'attachment; filename="predictions_15_days.csv"')
-                    msg.attach(csv_attachment)
-            
-            # Send
-            with smtplib.SMTP_SSL("smtp.gmail.com", 465) as server:
-                server.login(sender_email, sender_password)
-                server.send_message(msg)
-            print("   ✅ Gửi Email thành công!")
-        except Exception as e:
-            print(f"   ❌ Lỗi gửi email: {e}")
-            import traceback
-            traceback.print_exc()
-    else:
-        print("\nℹ️  Bỏ qua gửi Email vì chưa cấu hình SENDER_EMAIL trong file .env.")
+    if not sender_email or not sender_password:
+        print("⚠️  Email credentials not found in .env - skipping email send")
+        return False
+    
+    receiver_emails = [email.strip() for email in receiver_emails_str.split(",") if email.strip()]
+    
+    if not receiver_emails:
+        print("⚠️  No receiver emails configured - skipping email send")
+        return False
+    
+    print(f"\n📧 Sending email to: {', '.join(receiver_emails)}")
+    
+    # Create message
+    msg = MIMEMultipart()
+    msg['From'] = sender_email
+    msg['To'] = ", ".join(receiver_emails)
+    msg['Subject'] = subject
+    
+    # Attach HTML body
+    msg.attach(MIMEText(html_content, 'html'))
+    
+    # Attach chart image
+    if os.path.exists(image_path):
+        with open(image_path, 'rb') as img:
+            mime_img = MIMEImage(img.read())
+            mime_img.add_header('Content-Disposition', 'attachment', filename=os.path.basename(image_path))
+            msg.attach(mime_img)
+        print(f"   ✅ Attached image: {image_path}")
+    
+    # Attach CSV file
+    if os.path.exists(csv_path):
+        with open(csv_path, 'rb') as csv_file:
+            mime_csv = MIMEBase('application', 'octet-stream')
+            mime_csv.set_payload(csv_file.read())
+            encoders.encode_base64(mime_csv)
+            mime_csv.add_header('Content-Disposition', 'attachment', filename=os.path.basename(csv_path))
+            msg.attach(mime_csv)
+        print(f"   ✅ Attached CSV: {csv_path}")
+    
+    # Send email
+    try:
+        with smtplib.SMTP_SSL('smtp.gmail.com', 465) as server:
+            server.login(sender_email, sender_password)
+            server.sendmail(sender_email, receiver_emails, msg.as_string())
+        print(f"✅ Email sent successfully to {len(receiver_emails)} recipient(s)")
+        return True
+    except Exception as e:
+        print(f"❌ Failed to send email: {e}")
+        import traceback
+        traceback.print_exc()
+        return False

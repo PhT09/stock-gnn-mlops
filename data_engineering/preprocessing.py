@@ -339,7 +339,8 @@ def save_processed_data(df, processed_path, feature_cols):
 # SORTING AND EXPORT FUNCTIONS
 # ============================================================================
 
-def export_latest_price_volume(spark=None, raw_path=None, output_dir=None):
+def export_latest_price_volume(spark=None, raw_path=None, table_name=None):
+    """Export latest price & volume per ticker directly to Delta table"""
     logger.info("[EXPORTING LATEST PRICE & VOLUME PER TICKER]")
     
     # Initialize Spark if not provided
@@ -349,8 +350,8 @@ def export_latest_price_volume(spark=None, raw_path=None, output_dir=None):
     # Set default paths
     if raw_path is None:
         raw_path = "/Volumes/workspace/default/stock_data/raw/stock_data.parquet"
-    if output_dir is None:
-        output_dir = "/Volumes/workspace/default/stock_data/processed/"
+    if table_name is None:
+        table_name = "workspace.default.ticker_price_volume"
     
     # Read raw data
     df_raw = spark.read.parquet(raw_path)
@@ -361,15 +362,16 @@ def export_latest_price_volume(spark=None, raw_path=None, output_dir=None):
                      .filter(F.col("rn") == 1) \
                      .select("ticker", "close", "volume", "date")
     
-    # Save to file
-    output_file = output_dir + "ticker_price_volume.csv"
-    logger.info(f"Saving latest price & volume to: {output_file}")
+    # Write directly to Delta table
+    logger.info(f"Saving to Delta table: {table_name}")
+    df_latest.select("ticker", "close", "volume") \
+             .write \
+             .format("delta") \
+             .mode("overwrite") \
+             .saveAsTable(table_name)
     
-    # Convert to Pandas for CSV export
-    df_pd = df_latest.toPandas()
-    df_pd.to_csv(output_file, index=False, columns=["ticker", "close", "volume"])
-    
-    logger.info(f"  Saved {len(df_pd)} tickers to {output_file}")
+    row_count = df_latest.count()
+    logger.info(f"  Table saved: {row_count} tickers")
     
     return df_latest
 

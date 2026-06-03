@@ -24,20 +24,48 @@ class StockPredictor:
             print(f"❌ Failed to load model: {e}")
             self.model = None
             
+    def _align_features(self, features: pd.DataFrame):
+        if not self.model:
+            raise ValueError("Model is not loaded.")
+        
+        aligned = features.copy()
+        try:
+            booster = self.model.get_booster()
+            expected_features = booster.feature_names
+            if expected_features:
+                for col in expected_features:
+                    if col not in aligned.columns:
+                        aligned[col] = 0.0
+                aligned = aligned[expected_features]
+            elif hasattr(self.model, "n_features_in_"):
+                n_feats = self.model.n_features_in_
+                if aligned.shape[1] != n_feats:
+                    print(f"⚠️ Feature count mismatch. Model expects {n_feats}, input has {aligned.shape[1]}. Slicing/padding.")
+                    if aligned.shape[1] > n_feats:
+                        aligned = aligned.iloc[:, :n_feats]
+                    else:
+                        for i in range(aligned.shape[1], n_feats):
+                            aligned[f"feat_{i}"] = 0.0
+        except Exception as e:
+            print(f"⚠️ Warning aligning features: {e}")
+        return aligned
+
     def predict(self, features: pd.DataFrame):
         """
         Predict stock movement
         
         Args:
-            features: DataFrame with 9 features [ma5, ma10, ma20, rsi, macd, 
-                     volatility_20, log_return, open, close]
+            features: DataFrame with 17 features [return_1d, return_3d, return_5d, 
+                     return_10d, price_vs_ma5, price_vs_ma10, ma5_vs_ma10, 
+                     volume_ratio, volume_change, volatility_5, volatility_10, 
+                     oc_return, hl_range, close_position, return_lag1, 
+                     return_lag2, return_lag3]
         
         Returns:
             predictions: 0=DOWN, 1=UP
         """
-        if not self.model:
-            raise ValueError("Model is not loaded.")
-        return self.model.predict(features)
+        aligned_features = self._align_features(features)
+        return self.model.predict(aligned_features)
     
     def predict_proba(self, features: pd.DataFrame):
         """
@@ -46,9 +74,8 @@ class StockPredictor:
         Returns:
             probabilities: [prob_down, prob_up]
         """
-        if not self.model:
-            raise ValueError("Model is not loaded.")
-        return self.model.predict_proba(features)
+        aligned_features = self._align_features(features)
+        return self.model.predict_proba(aligned_features)
         
 if __name__ == "__main__":
     # Test

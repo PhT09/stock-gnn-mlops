@@ -31,6 +31,11 @@ def health_check_databricks():
     """Endpoint để kiểm tra nhanh xem đã kết nối được lên Databricks chưa"""
     return check_databricks_connection()
 
+@app.get("/api/v1/health/databricks")
+def health_check_databricks():
+    """Endpoint để kiểm tra nhanh xem đã kết nối được lên Databricks chưa"""
+    return check_databricks_connection()
+
 if __name__ == "__main__":
     import uvicorn
     uvicorn.run(app, host="0.0.0.0", port=8000)

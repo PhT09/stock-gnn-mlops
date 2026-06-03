@@ -9,4 +9,6 @@ xgboost
 scikit-learn
 matplotlib
 seaborn
+databricks-sql-connector
 apscheduler
+sqlalchemy

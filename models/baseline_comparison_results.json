@@ -1,23 +1,23 @@
 [
   {
     "Model": "Logistic Regression",
-    "Accuracy": 0.6090607752651575,
-    "F1-Score": 0.0662854497941236,
-    "AUC-ROC": 0.5717554443289038,
-    "Training Time (s)": 3.95
+    "Accuracy": 0.4482758620689655,
+    "F1-Score": 0.5862068965517241,
+    "AUC-ROC": 0.5036926742108399,
+    "Training Time (s)": 0.01
   },
   {
     "Model": "Random Forest",
-    "Accuracy": 0.6208904123415818,
-    "F1-Score": 0.225466663367235,
-    "AUC-ROC": 0.6071291598042209,
-    "Training Time (s)": 121.09
+    "Accuracy": 0.4482758620689655,
+    "F1-Score": 0.4965034965034965,
+    "AUC-ROC": 0.45134008338296605,
+    "Training Time (s)": 0.26
   },
   {
     "Model": "XGBoost \u2b50",
-    "Accuracy": 0.620661025847649,
-    "F1-Score": 0.22579760945585634,
-    "AUC-ROC": 0.6081834079609788,
+    "Accuracy": 0.4559386973180077,
+    "F1-Score": 0.4701492537313433,
+    "AUC-ROC": 0.47382370458606315,
     "Training Time (s)": "N/A (existing)"
   }
 ]

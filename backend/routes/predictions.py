@@ -132,6 +132,94 @@ def get_next_session_batch(tickers: Optional[str] = Query(None, description="Com
     }
 
 
+@router.get("/top-buy")
+def get_top_buy(
+    limit: int = Query(10, description="Số lượng mã trả về", ge=1, le=100),
+    min_confidence: str = Query("MEDIUM", description="HIGH | MEDIUM | LOW (min level)")
+):
+    """
+    Top N mã được dự đoán TĂNG mạnh nhất cho phiên kế tiếp.
+    Sort theo probability DESC (probability càng cao → càng tin tăng).
+    Lọc theo mức confidence tối thiểu.
+    """
+    confidence_levels = ["LOW", "MEDIUM", "HIGH"]
+    if min_confidence not in confidence_levels:
+        raise HTTPException(status_code=400, detail="min_confidence must be HIGH, MEDIUM or LOW")
+    allowed = confidence_levels[confidence_levels.index(min_confidence):]
+    placeholders = ",".join(["?"] * len(allowed))
+
+    query = f"""
+        SELECT
+            ticker, day_1_date, day_1_prediction, day_1_signal,
+            day_1_probability, day_1_confidence, latest_data_date
+        FROM {TABLE_NAME}
+        WHERE day_1_prediction = 1
+          AND day_1_confidence IN ({placeholders})
+        ORDER BY day_1_probability DESC
+        LIMIT ?
+    """
+    data = execute_query(query, tuple(allowed) + (limit,))
+
+    return {
+        "filter": {"signal": "UP", "min_confidence": min_confidence},
+        "count": len(data),
+        "data": [
+            {
+                "ticker": row["ticker"],
+                "next_date": row["day_1_date"],
+                "signal": row["day_1_signal"],
+                "probability": row["day_1_probability"],
+                "confidence": row["day_1_confidence"],
+            }
+            for row in data
+        ],
+    }
+
+
+@router.get("/top-sell")
+def get_top_sell(
+    limit: int = Query(10, description="Số lượng mã trả về", ge=1, le=100),
+    min_confidence: str = Query("MEDIUM", description="HIGH | MEDIUM | LOW (min level)")
+):
+    """
+    Top N mã được dự đoán GIẢM mạnh nhất cho phiên kế tiếp.
+    Sort theo probability ASC (probability càng thấp → càng tin giảm).
+    Lọc theo mức confidence tối thiểu.
+    """
+    confidence_levels = ["LOW", "MEDIUM", "HIGH"]
+    if min_confidence not in confidence_levels:
+        raise HTTPException(status_code=400, detail="min_confidence must be HIGH, MEDIUM or LOW")
+    allowed = confidence_levels[confidence_levels.index(min_confidence):]
+    placeholders = ",".join(["?"] * len(allowed))
+
+    query = f"""
+        SELECT
+            ticker, day_1_date, day_1_prediction, day_1_signal,
+            day_1_probability, day_1_confidence, latest_data_date
+        FROM {TABLE_NAME}
+        WHERE day_1_prediction = 0
+          AND day_1_confidence IN ({placeholders})
+        ORDER BY day_1_probability ASC
+        LIMIT ?
+    """
+    data = execute_query(query, tuple(allowed) + (limit,))
+
+    return {
+        "filter": {"signal": "DOWN", "min_confidence": min_confidence},
+        "count": len(data),
+        "data": [
+            {
+                "ticker": row["ticker"],
+                "next_date": row["day_1_date"],
+                "signal": row["day_1_signal"],
+                "probability": row["day_1_probability"],
+                "confidence": row["day_1_confidence"],
+            }
+            for row in data
+        ],
+    }
+
+
 @router.get("/{ticker}/next")
 def get_next_session_single(ticker: str):
     """1. Dự đoán phiên giao dịch tiếp theo cho 1 cổ phiếu"""

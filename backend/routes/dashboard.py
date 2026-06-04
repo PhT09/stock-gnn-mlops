@@ -48,6 +48,7 @@ def get_market_summary():
             SUM(CASE WHEN day_1_confidence = 'LOW' THEN 1 ELSE 0 END) AS low_count,
             AVG(day_1_probability) AS avg_probability
         FROM {TABLE_NAME}
+        WHERE latest_data_date = (SELECT MAX(latest_data_date) FROM {TABLE_NAME})
     """
     data = execute_query(summary_query)
     if not data:

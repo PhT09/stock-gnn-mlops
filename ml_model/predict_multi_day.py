@@ -50,19 +50,54 @@ def predict_multi_day(n_days=15):
     
     # 1. Load model
     print(f"\n📦 Loading model...")
-    if not os.path.exists(MODEL_PATH):
-        raise FileNotFoundError(f"Model not found: {MODEL_PATH}")
+    model_path = MODEL_PATH
+    if not os.path.exists(model_path):
+        local_model = "models/best_model.json"
+        if os.path.exists(local_model):
+            model_path = local_model
+        else:
+            raise FileNotFoundError(f"Model not found: {MODEL_PATH}")
     
     model = xgb.XGBClassifier()
-    model.load_model(MODEL_PATH)
+    model.load_model(model_path)
     print("✅ Model loaded")
     
     # 2. Load latest data
     print(f"\n📂 Loading processed data...")
-    df = pd.read_parquet(PROCESSED_PATH)
+    processed_path = PROCESSED_PATH
+    if not os.path.exists(processed_path):
+        local_processed = "downloaded_data"
+        if os.path.exists(local_processed):
+            processed_path = local_processed
+        else:
+            raise FileNotFoundError(f"Processed features not found: {PROCESSED_PATH}")
+    
+    # Load parquet with robust schema type casting for 'date' column to avoid PyArrow timestamp errors
+    import glob
+    import pyarrow as pa
+    import pyarrow.parquet as pq
+    
+    if os.path.isdir(processed_path):
+        files = glob.glob(os.path.join(processed_path, "*.parquet"))
+        tables = []
+        for f in files:
+            try:
+                t = pq.read_table(f)
+                if 'date' in t.column_names:
+                    date_idx = t.column_names.index('date')
+                    t = t.set_column(date_idx, 'date', t.column('date').cast(pa.string()))
+                tables.append(t)
+            except Exception:
+                continue
+        if not tables:
+            raise FileNotFoundError(f"No valid parquet files found in {processed_path}")
+        table = pa.concat_tables(tables, promote_options="permissive")
+        df = table.to_pandas()
+    else:
+        df = pd.read_parquet(processed_path)
     # Handle session markers in date (e.g., "2026-06-02(2)" -> "2026-06-02")
     df['date'] = df['date'].astype(str).str.replace(r'\(\d+\)$', '', regex=True)
-    df['date'] = pd.to_datetime(df['date'])
+    df['date'] = pd.to_datetime(df['date'], format='mixed')
     
     # Get latest data for each ticker
     latest_df = df.sort_values('date').groupby('ticker').tail(1).reset_index(drop=True)
@@ -146,13 +181,44 @@ def predict_multi_day(n_days=15):
         result_data[f'day_{day_idx}_probability'] = adjusted_probs
         result_data[f'day_{day_idx}_confidence'] = confidences
         
-        # Update features for next day (naive approach: slight trend continuation)
-        # Adjust features slightly based on prediction
+        # Update features for next day (realistic directional update in standard-normal space)
         for i in range(len(X_current)):
+            # Shift return lags: lag3 = lag2, lag2 = lag1, lag1 = current_return
+            current_ret = X_current[i][0]
+            X_current[i][16] = X_current[i][15]  # lag3 = lag2
+            X_current[i][15] = X_current[i][14]  # lag2 = lag1
+            X_current[i][14] = current_ret       # lag1 = current
+
             if predictions[i] == 1:  # TĂNG
-                X_current[i] *= 1.001  # Slight upward adjustment
+                # Set 1d return to a positive standard deviation (e.g. +0.8)
+                X_current[i][0] = 0.8
+                # Accumulate multi-day returns slightly
+                X_current[i][1] = X_current[i][1] * 0.8 + 0.4  # return_3d
+                X_current[i][2] = X_current[i][2] * 0.8 + 0.3  # return_5d
+                X_current[i][3] = X_current[i][3] * 0.8 + 0.2  # return_10d
+                # Price moves above moving averages
+                X_current[i][4] += 0.15  # price_vs_ma5
+                X_current[i][5] += 0.10  # price_vs_ma10
+                X_current[i][6] += 0.05  # ma5_vs_ma10
+                # Open-close return is positive
+                X_current[i][11] = 0.5
+                # Close position moves to top of high-low range (close near high)
+                X_current[i][13] = 0.8
             else:  # GIẢM
-                X_current[i] *= 0.999  # Slight downward adjustment
+                # Set 1d return to a negative standard deviation (e.g. -0.8)
+                X_current[i][0] = -0.8
+                # Accumulate multi-day returns negatively
+                X_current[i][1] = X_current[i][1] * 0.8 - 0.4  # return_3d
+                X_current[i][2] = X_current[i][2] * 0.8 - 0.3  # return_5d
+                X_current[i][3] = X_current[i][3] * 0.8 - 0.2  # return_10d
+                # Price moves below moving averages
+                X_current[i][4] -= 0.15  # price_vs_ma5
+                X_current[i][5] -= 0.10  # price_vs_ma10
+                X_current[i][6] -= 0.05  # ma5_vs_ma10
+                # Open-close return is negative
+                X_current[i][11] = -0.5
+                # Close position moves to bottom of high-low range (close near low)
+                X_current[i][13] = -0.8
         
         up_count = np.sum(predictions == 1)
         print(f"✅ {up_count}/{len(predictions)} TĂNG")

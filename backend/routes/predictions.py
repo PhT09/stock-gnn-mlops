@@ -55,9 +55,9 @@ def get_recommendations(limit: int = Query(5, description="Number of recommendat
         SELECT *
         FROM {TABLE_NAME}
         WHERE latest_data_date = (SELECT MAX(latest_data_date) FROM {TABLE_NAME})
-          AND day_1_signal = 'BUY'
-          AND day_2_signal = 'BUY'
-          AND day_3_signal = 'BUY'
+          AND (day_1_prediction = 1 OR day_1_signal = 'BUY')
+          AND (day_2_prediction = 1 OR day_2_signal = 'BUY')
+          AND (day_3_prediction = 1 OR day_3_signal = 'BUY')
     """
     data = execute_query(query)
     
@@ -153,7 +153,8 @@ def get_top_buy(
             ticker, day_1_date, day_1_prediction, day_1_signal,
             day_1_probability, day_1_confidence, latest_data_date
         FROM {TABLE_NAME}
-        WHERE day_1_prediction = 1
+        WHERE latest_data_date = (SELECT MAX(latest_data_date) FROM {TABLE_NAME})
+          AND day_1_prediction = 1
           AND day_1_confidence IN ({placeholders})
         ORDER BY day_1_probability DESC
         LIMIT ?
@@ -197,7 +198,8 @@ def get_top_sell(
             ticker, day_1_date, day_1_prediction, day_1_signal,
             day_1_probability, day_1_confidence, latest_data_date
         FROM {TABLE_NAME}
-        WHERE day_1_prediction = 0
+        WHERE latest_data_date = (SELECT MAX(latest_data_date) FROM {TABLE_NAME})
+          AND day_1_prediction = 0
           AND day_1_confidence IN ({placeholders})
         ORDER BY day_1_probability ASC
         LIMIT ?

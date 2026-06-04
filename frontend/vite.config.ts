@@ -21,7 +21,7 @@ export default defineConfig({
     proxy: {
       // FE gọi /api → Vite proxy đến backend container
       '/api': {
-        target: process.env.VITE_BACKEND_URL || 'http://backend:8000',
+        target: process.env.VITE_BACKEND_URL || 'http://localhost:8000',
         changeOrigin: true,
       },
     },

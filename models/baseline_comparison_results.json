@@ -1,0 +1,23 @@
+[
+  {
+    "Model": "Logistic Regression",
+    "Accuracy": 0.4482758620689655,
+    "F1-Score": 0.5862068965517241,
+    "AUC-ROC": 0.5036926742108399,
+    "Training Time (s)": 0.01
+  },
+  {
+    "Model": "Random Forest",
+    "Accuracy": 0.4482758620689655,
+    "F1-Score": 0.4965034965034965,
+    "AUC-ROC": 0.45134008338296605,
+    "Training Time (s)": 0.26
+  },
+  {
+    "Model": "XGBoost \u2b50",
+    "Accuracy": 0.4559386973180077,
+    "F1-Score": 0.4701492537313433,
+    "AUC-ROC": 0.47382370458606315,
+    "Training Time (s)": "N/A (existing)"
+  }
+]

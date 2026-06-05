@@ -1,12 +1,32 @@
-version: "3"
-
 services:
   backend:
-    build: ./backend
+    build:
+      context: .
+      dockerfile: backend/Dockerfile
+    container_name: stock-mlops-backend
     ports:
       - "8000:8000"
+    env_file:
+      - ./backend/.env
+    volumes:
+      - ./data:/app/data
+    restart: unless-stopped
 
-  mlflow:
-    image: ghcr.io/mlflow/mlflow
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    container_name: stock-mlops-frontend
     ports:
-      - "5000:5000"
+      - "5173:5173"
+    environment:
+      # Vite proxy /api → backend service name trong docker network
+      - VITE_BACKEND_URL=http://backend:8000
+    volumes:
+      # Mount source code để hot reload
+      - ./frontend:/app
+      # Anonymous volume giữ node_modules trong container (không bị host override)
+      - /app/node_modules
+    depends_on:
+      - backend
+    restart: unless-stopped
